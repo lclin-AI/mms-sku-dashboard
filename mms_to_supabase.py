@@ -53,7 +53,10 @@ def report_files(s, bu, store, dates):
 def read_report(s, bu, filename):
     r = s.get(f"{MMS}/order/{bu}/DAILY/{filename}/downloadreport", timeout=120)
     r.raise_for_status()
-    wb = load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
+    # NOT read_only: these server-generated xlsx files omit a proper <dimension>,
+    # and openpyxl's read_only mode then sees only the first row. Full load reads
+    # all rows correctly (files are small, ~300KB).
+    wb = load_workbook(io.BytesIO(r.content), read_only=False, data_only=True)
     ws = wb.active
     header = None
     for row in ws.iter_rows(values_only=True):

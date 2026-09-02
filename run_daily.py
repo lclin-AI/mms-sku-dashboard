@@ -30,7 +30,10 @@ def load_env_file():
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip())
+        # run.env is the authoritative operational config: override any value
+        # already present in the shell (e.g. a SUPABASE_SERVICE_ROLE_KEY that
+        # belongs to a different project).
+        os.environ[k.strip()] = v.strip()
 
 
 def log(msg):
