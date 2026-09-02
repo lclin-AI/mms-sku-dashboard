@@ -1,7 +1,13 @@
-# secrets / local scratch - never commit
+# secrets / local state - never commit
 .db_password
 .anon_key
+run.env
+creds.json
+mms_state.json
+monitor_state.json
+login_failed.png
 create_resp.json
+*.log
 *.csv
 __pycache__/
 .env

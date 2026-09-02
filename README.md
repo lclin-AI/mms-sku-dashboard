@@ -67,3 +67,60 @@ It expires in well under an hour. On expiry the API answers `code: FAIL`,
   Today's bar therefore reads low until the next run.
 - The report contains customer PII (name, phone, address). The uploader
   deliberately keeps **none** of it — only SKU, dates, qty and money.
+
+## Truly automated daily (Windows Task Scheduler)
+
+The MMS accessToken lives under an hour, so the pipeline logs in fresh on every
+run with Playwright — driving the real sign-in page, not any internal token
+endpoint. A saved browser session (`mms_state.json`) means most runs skip the
+password step and just refresh.
+
+```
+07:00  run_daily.bat  ->  mms_login.get_token()  ->  mms_to_supabase.py (per store)
+07:40  run_monitor.bat -> checks Supabase freshness, Slack-alerts if the load failed
+```
+
+### One-time setup
+
+1. `pip install requests openpyxl playwright && python -m playwright install chromium`
+2. Copy `run.env.example` → `run.env`, fill in `SUPABASE_SERVICE_ROLE_KEY`
+   (from the **new** project's Settings → API → service_role), your `MMS_STORES`,
+   and MMS `MMS_USERCODE` / `MMS_PASSWORD` (or `creds.json`).
+3. **Supervised first login** — clears any captcha/2FA and seeds the session:
+   ```
+   python mms_login.py --headed
+   ```
+   It should print a token and write `mms_state.json`.
+4. Dry-run the full load once:
+   ```
+   python run_daily.py
+   ```
+   Then reload the dashboard — data should appear.
+5. Register the schedules (elevated PowerShell):
+   ```
+   powershell -ExecutionPolicy Bypass -File register_tasks.ps1
+   ```
+
+### Notes
+
+- The load and the ETL run **on this machine**, so the MMS token and the Supabase
+  service_role key never leave it — only SKU/date/qty/amount rows go to Supabase.
+- Uses the WindowsApps Python alias, which needs the user profile; the tasks run
+  as the current user. The machine must be on around 07:00 (Task Scheduler's
+  *Start when available* catches a missed run once it powers on).
+- `mms_monitor.py` reuses the Slack bot token in `imax-stock-slack\config.json`;
+  set `SLACK_TOKEN` / `SLACK_CHANNEL` to override, or it just prints.
+- If MMS changes its login DOM, `mms_login.py` writes `login_failed.png` — run
+  `--headed` to see what happened and adjust selectors.
+
+### Files (operational — gitignored secrets)
+
+| file | role |
+|------|------|
+| `mms_login.py`     | Playwright headless login → accessToken (+ saved session) |
+| `run_daily.py`     | orchestrator: login → ETL per store |
+| `mms_to_supabase.py` | the ETL (also usable standalone with a manual token) |
+| `mms_monitor.py`   | freshness check + Slack alert |
+| `run_daily.bat` / `run_monitor.bat` | Task Scheduler entry points |
+| `register_tasks.ps1` | one-shot scheduled-task registration |
+| `run.env`, `creds.json`, `mms_state.json` | local secrets/state, never committed |
