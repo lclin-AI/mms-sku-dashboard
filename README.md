@@ -1,7 +1,34 @@
 # MMS SKU Sales Dashboard
 
+**Live: https://lclin-ai.github.io/mms-sku-dashboard/**
+**Repo: https://github.com/lclin-AI/mms-sku-dashboard**
+
+> Deployed and wired end to end. The page is live but shows an empty state until
+> the first data load runs — see "What is left for you" below.
+
 Static dashboard (GitHub Pages) that reads SKU-level sales out of Supabase.
 Pick a SKU from the dropdown and it shows that SKU's daily sales performance.
+
+## What is left for you (2 things)
+
+Everything else is done: Supabase project + schema, the ETL, the headless-login
+automation, both Windows scheduled tasks (registered; next run tomorrow 07:00),
+and this repo + GitHub Pages.
+
+1. **Fill two secrets** — both files already exist and are gitignored:
+   - `creds.json` — your MMS `usercode` / `password` (the merchant.shoalter.com
+     sign-in, i.e. the "Vivian Cheung" account, NOT the CMS account).
+   - `run.env` — paste `SUPABASE_SERVICE_ROLE_KEY` for project
+     `owdshvgtkikubkphtfww` (Supabase dashboard → Settings → API → service_role).
+
+2. **One supervised first run** (clears any captcha/2FA and seeds the session),
+   from `C:\Users\lclin\Downloads\mms-sku-dashboard`:
+   ```
+   python mms_login.py --headed      # should print a token, write mms_state.json
+   python run_daily.py               # loads all stores into Supabase
+   ```
+   Reload the live page — the SKU dropdown and charts populate. After that the
+   07:00 task runs it unattended daily.
 
 ```
 MMS Daily Order Report API  ──(mms_to_supabase.py, daily)──>  Supabase
