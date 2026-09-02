@@ -1,0 +1,7 @@
+# secrets / local scratch - never commit
+.db_password
+.anon_key
+create_resp.json
+*.csv
+__pycache__/
+.env

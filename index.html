@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SKU Sales Performance</title>
+<script src="config.js"></script>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#14161a; --muted:#6b7280;
+  --line:#e4e7ec; --accent:#4f46e5; --accent-soft:#eef2ff;
+  --bar:#818cf8; --bar-strong:#4f46e5; --amt:#0d9488; --warn:#b45309;
+}
+:root:not([data-theme="light"]){}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa3af;
+    --line:#282d38; --accent:#8b8cf9; --accent-soft:#20233340;
+    --bar:#4c4f9e; --bar-strong:#8b8cf9; --amt:#2dd4bf; --warn:#fbbf24;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa3af;
+  --line:#282d38; --accent:#8b8cf9; --accent-soft:#20233340;
+  --bar:#4c4f9e; --bar-strong:#8b8cf9; --amt:#2dd4bf; --warn:#fbbf24;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 "Noto Sans HK",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
+h1{font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:13px;margin:0 0 22px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+.controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:18px}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field label{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.02em}
+input,select,button{font:inherit;color:var(--ink);background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+#skuSearch{width:230px}
+#skuSelect{width:420px;max-width:100%}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:8px 14px;background:transparent;cursor:pointer;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.kpi .v{font-size:24px;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi .n{font-size:11px;color:var(--muted);margin-top:2px}
+.chartbox{overflow-x:auto}
+svg{display:block}
+.tbl-wrap{overflow-x:auto;margin-top:16px}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:520px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tbody tr:hover{background:var(--accent-soft)}
+.clickable{cursor:pointer}
+.note{font-size:12px;color:var(--muted);margin-top:14px;line-height:1.6}
+.badge{display:inline-block;background:var(--accent-soft);color:var(--accent);
+  border:1px solid var(--line);border-radius:99px;padding:2px 9px;font-size:11px;font-weight:600}
+.warnbox{border-left:3px solid var(--warn);padding:10px 14px;margin:14px 0;
+  background:var(--panel);border-radius:0 8px 8px 0;font-size:13px;color:var(--muted)}
+.empty{padding:44px 20px;text-align:center;color:var(--muted)}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--muted);margin:6px 0 0}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SKU Sales Performance</h1>
+  <p class="sub" id="subtitle">HKTVmall MMS · Daily Order Report</p>
+
+  <div class="panel">
+    <div class="controls">
+      <div class="field">
+        <label for="storeSelect">商店編號</label>
+        <select id="storeSelect"></select>
+      </div>
+      <div class="field">
+        <label for="skuSearch">搜尋 SKU</label>
+        <input id="skuSearch" type="search" placeholder="SKU ID 或名稱…" autocomplete="off">
+      </div>
+      <div class="field" style="flex:1">
+        <label for="skuSelect">SKU</label>
+        <select id="skuSelect"><option value="">— 全部 SKU（總覽）—</option></select>
+      </div>
+      <div class="field">
+        <label>日期基準</label>
+        <div class="seg" id="basisSeg">
+          <button data-basis="order" aria-pressed="true">落單日</button>
+          <button data-basis="delivery" aria-pressed="false">送貨日</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="kpis" class="kpis"></div>
+    <div id="chart" class="chartbox"></div>
+    <div id="legend" class="legend"></div>
+    <div id="table" class="tbl-wrap"></div>
+    <div id="note" class="note"></div>
+  </div>
+</div>
+
+<script>
+const CFG = window.DASH_CONFIG || {};
+const REST = CFG.SUPABASE_URL + "/rest/v1";
+const HEAD = { apikey: CFG.SUPABASE_ANON_KEY, Authorization: "Bearer " + CFG.SUPABASE_ANON_KEY };
+
+const $ = id => document.getElementById(id);
+const fmtN = n => Number(n).toLocaleString("en-US", {maximumFractionDigits:0});
+const fmtM = n => "$" + Number(n).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
+const md   = d => d.slice(5);
+
+let state = { store: CFG.DEFAULT_STORE, basis: "order", sku: "", catalog: [], rows: [] };
+
+async function api(path) {
+  const r = await fetch(REST + path, { headers: HEAD });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+async function loadStores() {
+  const rows = await api("/mms_sku_catalog?select=store_code&limit=5000");
+  const stores = [...new Set(rows.map(r => r.store_code))].sort();
+  if (!stores.length) return [];
+  $("storeSelect").innerHTML = stores.map(s => `<option${s===state.store?" selected":""}>${s}</option>`).join("");
+  if (!stores.includes(state.store)) state.store = stores[0];
+  return stores;
+}
+
+async function loadCatalog() {
+  state.catalog = await api(
+    `/mms_sku_catalog?store_code=eq.${state.store}&select=*&order=qty_total.desc&limit=5000`);
+  renderSkuOptions();
+}
+
+function renderSkuOptions() {
+  const q = $("skuSearch").value.trim().toLowerCase();
+  const list = state.catalog.filter(c =>
+    !q || c.sku_id.toLowerCase().includes(q) ||
+    (c.sku_name_zh||"").toLowerCase().includes(q) ||
+    (c.sku_name_en||"").toLowerCase().includes(q));
+  $("skuSelect").innerHTML =
+    `<option value="">— 全部 SKU（總覽，${state.catalog.length} 隻）—</option>` +
+    list.map(c => `<option value="${c.sku_id}"${c.sku_id===state.sku?" selected":""}>` +
+      `${c.sku_id} · ${(c.sku_name_zh||c.sku_name_en||"").slice(0,44)} — ${fmtN(c.qty_total)} 件</option>`).join("");
+  if (state.sku && !list.some(c => c.sku_id === state.sku)) $("skuSelect").value = "";
+}
+
+async function loadRows() {
+  const sel = "order_date,delivery_date,sku_id,sku_name_zh,qty,amount,lines";
+  const filter = state.sku ? `&sku_id=eq.${encodeURIComponent(state.sku)}` : "";
+  state.rows = await api(
+    `/mms_sku_daily?store_code=eq.${state.store}${filter}&select=${sel}&limit=100000`);
+}
+
+function byDate(rows, basis) {
+  const key = basis === "delivery" ? "delivery_date" : "order_date";
+  const m = new Map();
+  for (const r of rows) {
+    const d = r[key];
+    if (!m.has(d)) m.set(d, { d, qty:0, amount:0, lines:0, skus:new Set() });
+    const o = m.get(d);
+    o.qty += +r.qty; o.amount += +r.amount; o.lines += r.lines; o.skus.add(r.sku_id);
+  }
+  return [...m.values()].sort((a,b) => a.d < b.d ? -1 : 1);
+}
+
+function renderKpis(series) {
+  const qty = series.reduce((a,b)=>a+b.qty,0);
+  const amt = series.reduce((a,b)=>a+b.amount,0);
+  const lines = series.reduce((a,b)=>a+b.lines,0);
+  const days = series.filter(s=>s.qty>0).length;
+  const tiles = [
+    ["總銷量", fmtN(qty) + " 件", days ? fmtN(qty/days) + " 件／日" : ""],
+    ["總銷售額", fmtM(amt), days ? fmtM(amt/days) + "／日" : ""],
+    ["平均單價", qty ? fmtM(amt/qty) : "—", "扣折扣後"],
+    ["訂單行數", fmtN(lines), qty ? (qty/lines).toFixed(2) + " 件／行" : ""],
+    ["有銷售日數", days + " 日", series.length ? `共 ${series.length} 日` : ""],
+  ];
+  if (!state.sku) {
+    const skus = new Set(); series.forEach(s => s.skus.forEach(k => skus.add(k)));
+    tiles.push(["活躍 SKU", fmtN(skus.size), "有落單嘅 SKU"]);
+  }
+  $("kpis").innerHTML = tiles.map(([k,v,n]) =>
+    `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join("");
+}
+
+function renderChart(series) {
+  if (!series.length) { $("chart").innerHTML = ""; $("legend").innerHTML = ""; return; }
+  const W = Math.max(640, series.length * 74), H = 260;
+  const P = { t: 18, r: 56, b: 34, l: 56 };
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const maxQ = Math.max(1, ...series.map(s=>s.qty));
+  const maxA = Math.max(1, ...series.map(s=>s.amount));
+  const bw = Math.min(38, iw / series.length * 0.6);
+  const x = i => P.l + (i + 0.5) * (iw / series.length);
+  const yq = v => P.t + ih - (v / maxQ) * ih;
+  const ya = v => P.t + ih - (v / maxA) * ih;
+
+  const grid = [0,.25,.5,.75,1].map(f => {
+    const y = P.t + ih - f*ih;
+    return `<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="var(--line)" stroke-width="1"/>
+            <text x="${P.l-8}" y="${y+4}" text-anchor="end" font-size="10" fill="var(--muted)">${fmtN(maxQ*f)}</text>
+            <text x="${W-P.r+8}" y="${y+4}" font-size="10" fill="var(--amt)">${fmtN(maxA*f)}</text>`;
+  }).join("");
+
+  const bars = series.map((s,i) =>
+    `<rect x="${x(i)-bw/2}" y="${yq(s.qty)}" width="${bw}" height="${Math.max(0,P.t+ih-yq(s.qty))}"
+       rx="3" fill="var(--bar)"><title>${s.d} · ${fmtN(s.qty)} 件 · ${fmtM(s.amount)}</title></rect>`).join("");
+
+  const path = series.map((s,i) => `${i?"L":"M"}${x(i)},${ya(s.amount)}`).join(" ");
+  const dots = series.map((s,i) =>
+    `<circle cx="${x(i)}" cy="${ya(s.amount)}" r="3.5" fill="var(--amt)"><title>${s.d} · ${fmtM(s.amount)}</title></circle>`).join("");
+
+  const labels = series.map((s,i) =>
+    `<text x="${x(i)}" y="${H-12}" text-anchor="middle" font-size="10" fill="var(--muted)">${md(s.d)}</text>`).join("");
+
+  $("chart").innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+       aria-label="每日銷量同銷售額">${grid}${bars}
+       <path d="${path}" fill="none" stroke="var(--amt)" stroke-width="2"/>${dots}${labels}</svg>`;
+  $("legend").innerHTML =
+    `<span><i style="background:var(--bar)"></i>銷量（件，左軸）</span>
+     <span><i style="background:var(--amt)"></i>銷售額（HK$，右軸）</span>`;
+}
+
+function renderTable(series) {
+  if (state.sku) {
+    $("table").innerHTML = `<table><thead><tr>
+      <th>${state.basis==="delivery"?"送貨日":"落單日"}</th>
+      <th class="num">銷量</th><th class="num">銷售額</th>
+      <th class="num">訂單行</th><th class="num">平均單價</th></tr></thead><tbody>` +
+      series.map(s => `<tr><td>${s.d}</td><td class="num">${fmtN(s.qty)}</td>
+        <td class="num">${fmtM(s.amount)}</td><td class="num">${fmtN(s.lines)}</td>
+        <td class="num">${s.qty?fmtM(s.amount/s.qty):"—"}</td></tr>`).join("") +
+      `</tbody></table>`;
+    return;
+  }
+  const top = state.catalog.slice(0, 30);
+  $("table").innerHTML = `<table><thead><tr>
+    <th>#</th><th>SKU</th><th>名稱</th>
+    <th class="num">銷量</th><th class="num">銷售額</th><th class="num">平均單價</th>
+    </tr></thead><tbody>` +
+    top.map((c,i) => `<tr class="clickable" data-sku="${c.sku_id}">
+      <td>${i+1}</td><td>${c.sku_id}</td>
+      <td>${(c.sku_name_zh||c.sku_name_en||"").slice(0,46)}</td>
+      <td class="num">${fmtN(c.qty_total)}</td>
+      <td class="num">${fmtM(c.amount_total)}</td>
+      <td class="num">${c.qty_total?fmtM(c.amount_total/c.qty_total):"—"}</td></tr>`).join("") +
+    `</tbody></table>`;
+  $("table").querySelectorAll("tr[data-sku]").forEach(tr =>
+    tr.onclick = () => { state.sku = tr.dataset.sku; $("skuSelect").value = state.sku; render(); });
+}
+
+function render() {
+  const series = byDate(state.rows, state.basis);
+  const c = state.catalog.find(x => x.sku_id === state.sku);
+  $("subtitle").innerHTML = state.sku
+    ? `<span class="badge">${state.sku}</span> ${c ? (c.sku_name_zh||c.sku_name_en||"") : ""}`
+    : `HKTVmall MMS · Daily Order Report · ${state.store} · ${state.catalog.length} 隻 SKU`;
+  renderKpis(series);
+  renderChart(series);
+  renderTable(series);
+  $("note").innerHTML = state.basis === "delivery"
+    ? "按<b>送貨日</b>分組。呢個 view 只包含喺已抓落嚟嘅落單日入面嘅訂單 — 尾段日子會偏低，因為單未落齊。"
+    : "按<b>落單日</b>分組。當日檔案係即日 12:00 snapshot，翌日先變成全日數，所以今日嗰條 bar 通常偏低。";
+}
+
+async function boot() {
+  if (!CFG.SUPABASE_URL || CFG.SUPABASE_URL.includes("REPLACE_ME")) {
+    document.querySelector(".panel").innerHTML =
+      '<div class="empty">未設定 Supabase。請填好 <code>config.js</code> 入面嘅 SUPABASE_URL 同 SUPABASE_ANON_KEY。</div>';
+    return;
+  }
+  try {
+    const stores = await loadStores();
+    if (!stores.length) {
+      document.querySelector(".panel").innerHTML =
+        '<div class="empty">Supabase 仲未有數據。行一次 <code>mms_to_supabase.py</code> 先。</div>';
+      return;
+    }
+    await loadCatalog();
+    await loadRows();
+    render();
+  } catch (e) {
+    document.querySelector(".panel").innerHTML =
+      `<div class="empty">讀 Supabase 失敗：<br><code>${String(e.message).slice(0,300)}</code></div>`;
+  }
+}
+
+$("storeSelect").onchange = async e => {
+  state.store = e.target.value; state.sku = ""; $("skuSearch").value = "";
+  await loadCatalog(); await loadRows(); render();
+};
+$("skuSearch").oninput = renderSkuOptions;
+$("skuSelect").onchange = async e => { state.sku = e.target.value; await loadRows(); render(); };
+$("basisSeg").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.basis = b.dataset.basis;
+  [...e.currentTarget.children].forEach(x => x.setAttribute("aria-pressed", x === b));
+  render();
+};
+
+boot();
+</script>
+</body>
+</html>
