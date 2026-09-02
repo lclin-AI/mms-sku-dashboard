@@ -1,0 +1,50 @@
+name: MMS SKU daily backfill (12 days)
+
+# Once a day, re-pull the full 12-day window so past days that were still
+# accruing when last seen get their final numbers, and to cover any 5-min
+# runs that GitHub skipped. 07:00 Asia/Hong_Kong = 23:00 UTC.
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: mms-backfill
+  cancel-in-progress: false
+
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: https://owdshvgtkikubkphtfww.supabase.co
+      MMS_STORES: B0812001
+      MMS_DAYS: "12"
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      MMS_USERCODE: ${{ secrets.MMS_USERCODE }}
+      MMS_PASSWORD: ${{ secrets.MMS_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Cache Playwright browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests openpyxl playwright
+          python -m playwright install --with-deps chromium
+      - name: Run backfill (12 days)
+        run: python run_daily.py
+      - name: Upload login screenshot on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: login_failed
+          path: login_failed.png
+          if-no-files-found: ignore
