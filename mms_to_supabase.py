@@ -125,6 +125,10 @@ def main():
         agg = defaultdict(lambda: {"qty": 0.0, "amount": 0.0, "lines": 0,
                                    "zh": None, "en": None})
         for rec in read_report(mms, a.bu, fn):
+            # Exclude cancelled orders from sales. Covers CUS_REQ_CANCEL,
+            # CANCELLED, CS_CANCEL, CS_CANCEL_MERCHANT_PAYMENT, etc.
+            if "CANCEL" in str(rec.get("Status") or "").upper():
+                continue
             k = (as_date(rec.get("Delivery Date")), str(rec["SKU ID"]))
             r = agg[k]
             r["qty"] += float(rec.get("Qty (Q)") or 0)
