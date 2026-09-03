@@ -45,3 +45,12 @@ create policy mms_sku_daily_anon_read
   on mms_sku_daily for select
   to anon, authenticated
   using (true);
+
+-- Per-date aggregate for the "all SKU" overview. The raw table has ~12k rows,
+-- and PostgREST caps a response at ~1000, so the overview reads this small view
+-- (store x order_date x delivery_date) and re-groups by either date client-side.
+create or replace view mms_date_grain as
+  select store_code, order_date, delivery_date,
+         sum(qty) as qty, sum(amount) as amount, sum(lines) as lines
+  from mms_sku_daily
+  group by store_code, order_date, delivery_date;

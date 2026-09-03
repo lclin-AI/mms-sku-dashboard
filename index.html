@@ -70,6 +70,7 @@ tbody tr:hover{background:var(--accent-soft)}
 <div class="wrap">
   <h1>SKU Sales Performance</h1>
   <p class="sub" id="subtitle">HKTVmall MMS · Daily Order Report</p>
+  <p class="sub" id="lastUpdate" title="資料由 Supabase 每 ~5 分鐘更新"></p>
 
   <div class="panel">
     <div class="controls">
@@ -129,6 +130,36 @@ async function loadStores() {
   return stores;
 }
 
+function fmtHK(dt) {
+  // dt is a Date (UTC instant); render in Asia/Hong_Kong.
+  return new Intl.DateTimeFormat("zh-HK", {
+    timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false }).format(dt);
+}
+function agoText(dt) {
+  const min = Math.max(0, Math.round((Date.now() - dt.getTime()) / 60000));
+  if (min < 1) return "啱啱";
+  if (min < 60) return min + " 分鐘前";
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h < 24) return h + " 小時" + (m ? " " + m + " 分鐘" : "") + "前";
+  return Math.floor(h / 24) + " 日前";
+}
+
+async function loadLastUpdate() {
+  const el = $("lastUpdate");
+  try {
+    const rows = await api(
+      `/mms_sku_daily?store_code=eq.${state.store}&select=updated_at&order=updated_at.desc&limit=1`);
+    if (!rows.length) { el.textContent = ""; return; }
+    const dt = new Date(rows[0].updated_at);
+    const stale = (Date.now() - dt.getTime()) > 90 * 60000;
+    el.innerHTML = `資料最後更新：<b>${fmtHK(dt)}</b>（${agoText(dt)}）` +
+      (stale ? ' <span style="color:var(--warn)">⚠ 可能已停止更新</span>' : "");
+  } catch (e) {
+    el.textContent = "";
+  }
+}
+
 async function loadCatalog() {
   state.catalog = await api(
     `/mms_sku_catalog?store_code=eq.${state.store}&select=*&order=qty_total.desc&limit=5000`);
@@ -149,10 +180,19 @@ function renderSkuOptions() {
 }
 
 async function loadRows() {
-  const sel = "order_date,delivery_date,sku_id,sku_name_zh,qty,amount,lines";
-  const filter = state.sku ? `&sku_id=eq.${encodeURIComponent(state.sku)}` : "";
-  state.rows = await api(
-    `/mms_sku_daily?store_code=eq.${state.store}${filter}&select=${sel}&limit=100000`);
+  // A single SKU is a handful of rows. The "all SKU" overview would be many
+  // thousands of raw rows — and PostgREST caps a response at ~1000 — so for the
+  // overview we read the pre-aggregated per-date view instead (small + correct).
+  if (state.sku) {
+    state.rows = await api(
+      `/mms_sku_daily?store_code=eq.${state.store}` +
+      `&sku_id=eq.${encodeURIComponent(state.sku)}` +
+      `&select=order_date,delivery_date,qty,amount,lines&limit=10000`);
+  } else {
+    state.rows = await api(
+      `/mms_date_grain?store_code=eq.${state.store}` +
+      `&select=order_date,delivery_date,qty,amount,lines&limit=10000`);
+  }
 }
 
 function byDate(rows, basis) {
@@ -160,9 +200,9 @@ function byDate(rows, basis) {
   const m = new Map();
   for (const r of rows) {
     const d = r[key];
-    if (!m.has(d)) m.set(d, { d, qty:0, amount:0, lines:0, skus:new Set() });
+    if (!m.has(d)) m.set(d, { d, qty:0, amount:0, lines:0 });
     const o = m.get(d);
-    o.qty += +r.qty; o.amount += +r.amount; o.lines += r.lines; o.skus.add(r.sku_id);
+    o.qty += +r.qty; o.amount += +r.amount; o.lines += r.lines;
   }
   return [...m.values()].sort((a,b) => a.d < b.d ? -1 : 1);
 }
@@ -180,8 +220,7 @@ function renderKpis(series) {
     ["有銷售日數", days + " 日", series.length ? `共 ${series.length} 日` : ""],
   ];
   if (!state.sku) {
-    const skus = new Set(); series.forEach(s => s.skus.forEach(k => skus.add(k)));
-    tiles.push(["活躍 SKU", fmtN(skus.size), "有落單嘅 SKU"]);
+    tiles.push(["活躍 SKU", fmtN(state.catalog.length), "有銷售嘅 SKU"]);
   }
   $("kpis").innerHTML = tiles.map(([k,v,n]) =>
     `<div class="kpi"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join("");
@@ -284,6 +323,9 @@ async function boot() {
     await loadCatalog();
     await loadRows();
     render();
+    loadLastUpdate();
+    // keep the "last updated" line honest without a manual refresh
+    setInterval(loadLastUpdate, 5 * 60 * 1000);
   } catch (e) {
     document.querySelector(".panel").innerHTML =
       `<div class="empty">讀 Supabase 失敗：<br><code>${String(e.message).slice(0,300)}</code></div>`;
@@ -292,7 +334,7 @@ async function boot() {
 
 $("storeSelect").onchange = async e => {
   state.store = e.target.value; state.sku = ""; $("skuSearch").value = "";
-  await loadCatalog(); await loadRows(); render();
+  await loadCatalog(); await loadRows(); render(); loadLastUpdate();
 };
 $("skuSearch").oninput = renderSkuOptions;
 $("skuSelect").onchange = async e => { state.sku = e.target.value; await loadRows(); render(); };
