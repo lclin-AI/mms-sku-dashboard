@@ -65,3 +65,13 @@ create table if not exists imax_daily (
   primary key (store_code, date, sku_id));
 alter table imax_daily enable row level security;
 create policy imax_daily_anon_read on imax_daily for select to anon, authenticated using (true);
+
+-- Daily 6PM physical-stock snapshot (excl R/X locations). Populated by
+-- imax_stock6pm_to_supabase.py at ~18:00. "Remaining" for date D on the tracker
+-- = this snapshot from D-1. Forward-only (cannot be backfilled).
+create table if not exists imax_stock_6pm (
+  store_code text not null, date date not null, sku_id text not null,
+  phys_qty numeric not null default 0, updated_at timestamptz not null default now(),
+  primary key (store_code, date, sku_id));
+alter table imax_stock_6pm enable row level security;
+create policy imax_stock_6pm_anon_read on imax_stock_6pm for select to anon, authenticated using (true);

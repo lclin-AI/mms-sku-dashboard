@@ -151,15 +151,20 @@ async function render(){
   const c = state.catalog.find(x=>x.sku_id===state.sku);
   $("subtitle").innerHTML = `<span class="badge">${state.sku}</span> ${c?(c.sku_name_zh||c.sku_name_en||""):""}`;
 
-  const [imax, sales] = await Promise.all([
+  const [imax, sales, stock6] = await Promise.all([
     api(`/imax_daily?store_code=eq.${state.store}&sku_id=eq.${encodeURIComponent(state.sku)}`+
         `&select=date,po_qty,gr_qty,disposal_qty&limit=5000`),
     api(`/mms_sku_daily?store_code=eq.${state.store}&sku_id=eq.${encodeURIComponent(state.sku)}`+
         `&select=delivery_date,qty&limit=20000`),
+    api(`/imax_stock_6pm?store_code=eq.${state.store}&sku_id=eq.${encodeURIComponent(state.sku)}`+
+        `&select=date,phys_qty&limit=5000`),
   ]);
-  const po={},gr={},disp={},sale={};
+  const po={},gr={},disp={},sale={},phys={};
   for(const r of imax){ po[r.date]=r.po_qty; gr[r.date]=r.gr_qty; if(r.disposal_qty!=null) disp[r.date]=r.disposal_qty; }
   for(const r of sales){ sale[r.delivery_date]=(sale[r.delivery_date]||0)+ (+r.qty); }
+  for(const r of stock6){ phys[r.date]=r.phys_qty; }
+  // Base = GR if present, else PO if present, else 9999.
+  const baseOf = dt => (gr[dt]>0 ? gr[dt] : (po[dt]>0 ? po[dt] : 9999));
 
   const t0=todayHK();
   const start=addDays(t0,-state.back), end=addDays(t0,state.fwd);
@@ -167,27 +172,39 @@ async function render(){
   while(d<=end){ rows.push(d); d=addDays(d,1); }
 
   let tot={po:0,gr:0,sale:0};
+  const cell=(v,cls)=> v===undefined||v===null ? '<td class="dim">–</td>' : `<td class="${cls}">${fmtN(v)}</td>`;
   const body = rows.map(dt=>{
     const isToday = dt===t0;
     tot.po+=po[dt]||0; tot.gr+=gr[dt]||0; tot.sale+=sale[dt]||0;
-    const cell=(v,cls)=> v===undefined||v===null ? '<td class="dim">–</td>' : `<td class="${cls}">${fmtN(v)}</td>`;
+    // Remaining for date D = physical stock at 6PM of the PREVIOUS day.
+    const rem = phys[addDays(dt,-1)];
+    const base = baseOf(dt);
+    const hasBase = gr[dt]>0 || po[dt]>0;   // real base (not the 9999 fallback)
+    // Available = Base − Disposal − Sold − Remaining
+    const avail = base - (disp[dt]||0) - (sale[dt]||0) - (rem!=null?rem:0);
+    const availCls = avail<0 ? 'disp' : 'po';
     return `<tr class="${isToday?'today':''}"><td>${dt}${isToday?' <span class="dim">(今日)</span>':''}</td>`+
       cell(po[dt],'po')+cell(gr[dt],'gr')+cell(disp[dt],'disp')+
       (sale[dt]?`<td class="sale">${fmtN(sale[dt])}</td>`:'<td class="dim">–</td>')+
-      `<td class="dim">–</td></tr>`;
+      (rem!=null?`<td>${fmtN(rem)}</td>`:'<td class="dim">–</td>')+
+      `<td class="${hasBase?'':'dim'}" title="${hasBase?'':'無 PO/GR，Base=9999'}">${fmtN(base)}</td>`+
+      `<td class="${availCls}">${fmtN(avail)}</td></tr>`;
   }).join("");
 
   $("content").innerHTML = `<div class="tbl-wrap"><table>
     <thead><tr><th>Date</th><th>PO 數量</th><th>GR 數量</th><th>棄置數量</th>
-      <th>已售出數量</th><th>剩餘數量</th></tr></thead>
+      <th>已售出數量</th><th>剩餘數量</th><th title="有 GR 用 GR，冇用 PO，都冇 = 9999">Base</th>
+      <th title="Base − 棄置 − 已售 − 剩餘">可售數量</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr style="font-weight:650"><td>合計（${state.back}+${state.fwd} 日）</td>
       <td class="po">${fmtN(tot.po)}</td><td class="gr">${fmtN(tot.gr)}</td>
-      <td class="dim">–</td><td class="sale">${fmtN(tot.sale)}</td><td class="dim">–</td></tr></tfoot>
+      <td class="dim">–</td><td class="sale">${fmtN(tot.sale)}</td>
+      <td class="dim">–</td><td class="dim">–</td><td class="dim">–</td></tr></tfoot>
     </table></div>`;
   $("note").innerHTML =
-    "PO/GR 按 <b>booking date</b>（無 booking 嘅訂單唔會落喺日期上）。已售按 <b>送貨日</b>，取自銷售 dashboard。"+
-    "棄置 = 當日<b>搬入 R location</b> − 當日<b>搬返出</b>（location change 淨量，唔計 sap_disposal write-off）。「剩餘」稍後接入。";
+    "<b>Base</b> = 有 GR 用 GR，冇用 PO，都冇 = 9999。<b>可售</b> = Base − 棄置 − 已售 − 剩餘。<br>"+
+    "PO/GR 按 <b>booking date</b>；已售按 <b>送貨日</b>；棄置 = 當日搬入 R − 搬返出（唔計 sap_disposal）。"+
+    "<b>剩餘</b> = 前一日 6PM 實物庫存（唔含 R/X location），由每日 18:00 快照，<b>只由今日起累積、過去日子冇</b>。";
 }
 
 async function boot(){

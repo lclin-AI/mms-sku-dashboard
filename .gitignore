@@ -16,3 +16,4 @@ tmpl_*.xlsx
 po_*.json
 imax_run.log
 imax_disposal_run.log
+imax_stock6pm_run.log
