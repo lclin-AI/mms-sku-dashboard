@@ -54,3 +54,14 @@ create or replace view mms_date_grain as
          sum(qty) as qty, sum(amount) as amount, sum(lines) as lines
   from mms_sku_daily
   group by store_code, order_date, delivery_date;
+
+-- iMAX PO/GR (and later disposal) per SKU per booking date. Populated by a LOCAL
+-- job (imax_to_supabase.py) — iMAX is behind a WAF and internal-network only, so
+-- this cannot run in the cloud.
+create table if not exists imax_daily (
+  store_code text not null, date date not null, sku_id text not null,
+  po_qty numeric not null default 0, gr_qty numeric not null default 0,
+  disposal_qty numeric, updated_at timestamptz not null default now(),
+  primary key (store_code, date, sku_id));
+alter table imax_daily enable row level security;
+create policy imax_daily_anon_read on imax_daily for select to anon, authenticated using (true);

@@ -11,3 +11,6 @@ create_resp.json
 *.csv
 __pycache__/
 .env
+imax_session.json
+tmpl_*.xlsx
+po_*.json
