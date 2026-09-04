@@ -15,3 +15,4 @@ imax_session.json
 tmpl_*.xlsx
 po_*.json
 imax_run.log
+imax_disposal_run.log

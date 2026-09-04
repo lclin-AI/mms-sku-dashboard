@@ -154,18 +154,16 @@ def main():
     # already stored by upserting po/gr only would be complex; instead delete+insert
     # keeps po/gr authoritative. Disposal is loaded by a separate job that upserts
     # its own column, so run order: PO/GR first, then disposal.
-    # Only rewrite the window we just pulled (date >= cutoff); older archived rows
-    # stay. Scoping the delete also limits the brief gap to recent dates.
-    sb.delete(f"{sb_url}/rest/v1/imax_daily",
-              params={"store_code": f"eq.{a.store}", "date": f"gte.{cutoff}"},
-              timeout=60).raise_for_status()
+    # Upsert po/gr only (merge on the PK), so we never touch disposal_qty, which
+    # is maintained by imax_disposal_to_supabase.py. Missing rows are created with
+    # disposal_qty NULL; on conflict only po_qty/gr_qty change.
     for i in range(0, len(rows), 500):
         resp = sb.post(f"{sb_url}/rest/v1/imax_daily",
-                       headers={"Prefer": "return=minimal"},
+                       headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
                        json=rows[i:i + 500], timeout=120)
         if resp.status_code >= 300:
             sys.exit(f"Supabase write failed {resp.status_code}: {resp.text[:300]}")
-    print(f"wrote {len(rows)} rows to imax_daily for {a.store}", file=sys.stderr)
+    print(f"upserted {len(rows)} po/gr rows to imax_daily for {a.store}", file=sys.stderr)
 
 
 if __name__ == "__main__":
