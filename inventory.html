@@ -133,8 +133,17 @@ async function loadStores(){
 }
 
 async function loadCatalog(){
-  state.catalog = await api(
-    `/mms_sku_catalog?store_code=eq.${state.store}&select=sku_id,sku_name_zh,sku_name_en,qty_total&order=qty_total.desc&limit=5000`);
+  // Sold SKUs (with names + volume) first; then any other store SKU that has
+  // IIMS data (e.g. by-date SKUs like 10040 that never sold) so they are
+  // selectable too.
+  const [sold, iimsSkus] = await Promise.all([
+    api(`/mms_sku_catalog?store_code=eq.${state.store}&select=sku_id,sku_name_zh,sku_name_en,qty_total&order=qty_total.desc&limit=5000`),
+    api(`/imax_iims_sku?store_code=eq.${state.store}&select=sku_id&limit=10000`).catch(()=>[]),
+  ]);
+  const have = new Set(sold.map(r=>r.sku_id));
+  const extra = iimsSkus.map(r=>r.sku_id).filter(id=>!have.has(id)).sort()
+    .map(id=>({sku_id:id, sku_name_zh:"", sku_name_en:"", qty_total:0}));
+  state.catalog = sold.concat(extra);
   renderSkuOptions();
 }
 function renderSkuOptions(){
@@ -151,18 +160,26 @@ async function render(){
   const c = state.catalog.find(x=>x.sku_id===state.sku);
   $("subtitle").innerHTML = `<span class="badge">${state.sku}</span> ${c?(c.sku_name_zh||c.sku_name_en||""):""}`;
 
-  const [imax, sales, stock6] = await Promise.all([
-    api(`/imax_daily?store_code=eq.${state.store}&sku_id=eq.${encodeURIComponent(state.sku)}`+
+  const skuF = encodeURIComponent(state.sku);
+  const [imax, sales, stock6, iimsSku, iimsBd] = await Promise.all([
+    api(`/imax_daily?store_code=eq.${state.store}&sku_id=eq.${skuF}`+
         `&select=date,po_qty,gr_qty,disposal_qty&limit=5000`),
-    api(`/mms_sku_daily?store_code=eq.${state.store}&sku_id=eq.${encodeURIComponent(state.sku)}`+
+    api(`/mms_sku_daily?store_code=eq.${state.store}&sku_id=eq.${skuF}`+
         `&select=delivery_date,qty&limit=20000`),
-    api(`/imax_stock_6pm?store_code=eq.${state.store}&sku_id=eq.${encodeURIComponent(state.sku)}`+
+    api(`/imax_stock_6pm?store_code=eq.${state.store}&sku_id=eq.${skuF}`+
         `&select=date,phys_qty&limit=5000`),
+    api(`/imax_iims_sku?store_code=eq.${state.store}&sku_id=eq.${skuF}&select=quantity,has_bydate,update_stock_time`),
+    api(`/imax_iims_bydate?store_code=eq.${state.store}&sku_id=eq.${skuF}&select=date,quantity&limit=5000`),
   ]);
-  const po={},gr={},disp={},sale={},phys={};
+  const po={},gr={},disp={},sale={},phys={},iims={};
   for(const r of imax){ po[r.date]=r.po_qty; gr[r.date]=r.gr_qty; if(r.disposal_qty!=null) disp[r.date]=r.disposal_qty; }
   for(const r of sales){ sale[r.delivery_date]=(sale[r.delivery_date]||0)+ (+r.qty); }
   for(const r of stock6){ phys[r.date]=r.phys_qty; }
+  for(const r of iimsBd){ iims[r.date]=r.quantity; }
+  const iimsInfo = iimsSku[0] || null;
+  const iimsHasBydate = iimsInfo && iimsInfo.has_bydate;
+  if (iimsInfo && !iimsHasBydate)
+    $("subtitle").innerHTML += ` · <span class="badge">IIMS 現貨 ${fmtN(iimsInfo.quantity)}（無 by-date）</span>`;
   // Base = GR if present, else PO if present, else 9999.
   const baseOf = dt => (gr[dt]>0 ? gr[dt] : (po[dt]>0 ? po[dt] : 9999));
 
@@ -183,23 +200,29 @@ async function render(){
     // Available = Base − Disposal − Sold − Remaining
     const avail = base - (disp[dt]||0) - (sale[dt]||0) - (rem!=null?rem:0);
     const availCls = avail<0 ? 'disp' : 'po';
+    const iimsCell = iimsHasBydate
+      ? (iims[dt]!=null ? `<td class="gr">${fmtN(iims[dt])}</td>` : '<td class="dim">–</td>')
+      : '<td class="dim">–</td>';
     return `<tr class="${isToday?'today':''}"><td>${dt}${isToday?' <span class="dim">(今日)</span>':''}</td>`+
       cell(po[dt],'po')+cell(gr[dt],'gr')+cell(disp[dt],'disp')+
       (sale[dt]?`<td class="sale">${fmtN(sale[dt])}</td>`:'<td class="dim">–</td>')+
       (rem!=null?`<td>${fmtN(rem)}</td>`:'<td class="dim">–</td>')+
       `<td class="${hasBase?'':'dim'}" title="${hasBase?'':'無 PO/GR，Base=9999'}">${fmtN(base)}</td>`+
-      `<td class="${availCls}">${fmtN(avail)}</td></tr>`;
+      `<td class="${availCls}">${fmtN(avail)}</td>`+iimsCell+`</tr>`;
   }).join("");
 
+  const iimsHdr = iimsHasBydate ? "IIMS (by-date)"
+    : (iimsInfo ? `IIMS 現貨 ${fmtN(iimsInfo.quantity)}` : "IIMS");
   $("content").innerHTML = `<div class="tbl-wrap"><table>
     <thead><tr><th>Date</th><th>PO 數量</th><th>GR 數量</th><th>棄置數量</th>
       <th>已售出數量</th><th>剩餘數量</th><th title="有 GR 用 GR，冇用 PO，都冇 = 9999">Base</th>
-      <th title="Base − 棄置 − 已售 − 剩餘">可售數量</th></tr></thead>
+      <th title="Base − 棄置 − 已售 − 剩餘">可售數量</th>
+      <th title="IIMS stock-levels reference">${iimsHdr}</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr style="font-weight:650"><td>合計（${state.back}+${state.fwd} 日）</td>
       <td class="po">${fmtN(tot.po)}</td><td class="gr">${fmtN(tot.gr)}</td>
       <td class="dim">–</td><td class="sale">${fmtN(tot.sale)}</td>
-      <td class="dim">–</td><td class="dim">–</td><td class="dim">–</td></tr></tfoot>
+      <td class="dim">–</td><td class="dim">–</td><td class="dim">–</td><td class="dim">–</td></tr></tfoot>
     </table></div>`;
   $("note").innerHTML =
     "<b>Base</b> = 有 GR 用 GR，冇用 PO，都冇 = 9999。<b>可售</b> = Base − 棄置 − 已售 − 剩餘。<br>"+

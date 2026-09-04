@@ -75,3 +75,20 @@ create table if not exists imax_stock_6pm (
   primary key (store_code, date, sku_id));
 alter table imax_stock_6pm enable row level security;
 create policy imax_stock_6pm_anon_read on imax_stock_6pm for select to anon, authenticated using (true);
+
+-- IIMS stock-levels reference. imax_iims_sku = one row per SKU (total quantity +
+-- has_bydate). imax_iims_bydate = per-date rows when IIMS returns dateInventory[].
+-- Populated by imax_iims_to_supabase.py (local, ~5 min); IIMS s2s is not
+-- browser/CORS reachable so it cannot be called live from the page.
+create table if not exists imax_iims_sku (
+  store_code text not null, sku_id text not null, quantity numeric,
+  has_bydate boolean not null default false, update_stock_time text,
+  updated_at timestamptz not null default now(), primary key (store_code, sku_id));
+create table if not exists imax_iims_bydate (
+  store_code text not null, sku_id text not null, date date not null,
+  quantity numeric not null default 0, updated_at timestamptz not null default now(),
+  primary key (store_code, sku_id, date));
+alter table imax_iims_sku enable row level security;
+alter table imax_iims_bydate enable row level security;
+create policy p2 on imax_iims_sku for select to anon, authenticated using (true);
+create policy p1 on imax_iims_bydate for select to anon, authenticated using (true);
