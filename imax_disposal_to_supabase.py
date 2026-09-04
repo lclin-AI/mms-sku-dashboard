@@ -94,7 +94,14 @@ def imax_get(path, params):
 
 
 def day(ms):
-    return datetime.fromtimestamp(ms / 1000, HK).strftime("%Y-%m-%d") if ms else None
+    # Business day with a 4PM cutoff: a movement processed at/after 16:00 HK
+    # counts towards the NEXT day (that day's operations start after the cutoff).
+    if not ms:
+        return None
+    dt = datetime.fromtimestamp(ms / 1000, HK)
+    if dt.hour >= 16:
+        dt = dt + timedelta(days=1)
+    return dt.strftime("%Y-%m-%d")
 
 
 def main():
