@@ -95,7 +95,9 @@ def main():
                 "sortDirection": "DESC", "searchType": "ORDER_ID", "searchKeyword": "",
                 "pageNumber": page, "pageSize": 1000}
         j = mms.post(f"{MMS}/order/v2/consignments", data=json.dumps(body), timeout=90).json()
-        resp = j.get("response") or {}
+        resp = j.get("response")
+        if not isinstance(resp, dict):
+            sys.exit(f"consignments list failed on page {page}: {j.get('code')} {str(resp)[:200]}")
         for x in resp.get("data") or []:
             consigns.append((x.get("consignmentCode"), hk_date(x.get("deliveryDate"))))
         pg = resp.get("pagination") or {}
@@ -104,33 +106,60 @@ def main():
         page += 1
     print(f"{len(consigns)} express consignments in window", file=sys.stderr)
 
-    # 2) SKU lines per consignment
-    agg = defaultdict(lambda: {"qty": 0.0, "wb": 0})   # (delivery_date, sku) -> qty
+    # 2) SKU lines per consignment — INCREMENTAL: a consignment's SKU entries are
+    # immutable, so cache code -> [(sku, qty)] and only fetch details for codes we
+    # have not seen. Each run then only details the new orders (fast enough for a
+    # 5-min cadence); aggregation uses the current active list for delivery dates
+    # and to drop consignments that are no longer active (e.g. cancelled).
+    cache_file = os.path.join(HERE, f"express_cache_{a.store}.json")
+    cache = {}
+    if os.path.exists(cache_file):
+        try:
+            cache = json.load(open(cache_file, encoding="utf-8"))
+        except Exception:
+            cache = {}
 
-    def fetch(item):
-        code, dd = item
+    def sku_of(e):
+        s = str(e.get("skuId") or "")
+        return s.split("_S_")[-1] if "_S_" in s else s
+
+    need = [code for code, dd in consigns if code not in cache]
+
+    def fetch(code):
         try:
             r = mms.get(f"{MMS}/order/v2/{code}/consignmentDetails", timeout=60)
             entries = (r.json().get("data") or {}).get("consignmentEntries") or []
-            return dd, entries
+            return code, [[sku_of(e), float(e.get("quantity") or 0)] for e in entries]
         except Exception:
-            return dd, None
+            return code, None
 
     done = fail = 0
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
-        for dd, entries in ex.map(fetch, consigns):
+        for code, entries in ex.map(fetch, need):
             if entries is None:
                 fail += 1
                 continue
+            cache[code] = entries
             done += 1
-            for e in entries:
-                sku = str(e.get("skuId") or "")
-                if "_S_" in sku:
-                    sku = sku.split("_S_")[-1]
-                k = (dd, sku)
-                agg[k]["qty"] += float(e.get("quantity") or 0)
-                agg[k]["wb"] += 1
-    print(f"details ok={done} fail={fail}; {len(agg)} (date,sku) rows", file=sys.stderr)
+    print(f"cached={len(cache)} new-detailed={done} fail={fail} (of {len(need)} new)",
+          file=sys.stderr)
+
+    # aggregate over the CURRENT active list (drops no-longer-active consignments)
+    agg = defaultdict(lambda: {"qty": 0.0, "wb": 0})
+    active_codes = set()
+    for code, dd in consigns:
+        active_codes.add(code)
+        for sku, qty in cache.get(code, []):
+            k = (dd, sku)
+            agg[k]["qty"] += qty
+            agg[k]["wb"] += 1
+    # prune cache to codes still active (bound size)
+    cache = {c: cache[c] for c in active_codes if c in cache}
+    try:
+        json.dump(cache, open(cache_file, "w", encoding="utf-8"))
+    except Exception:
+        pass
+    print(f"{len(agg)} (date,sku) rows", file=sys.stderr)
 
     rows = [{"store_code": a.store, "delivery_date": dd, "sku_id": sku,
              "qty": round(v["qty"], 3), "waybills": v["wb"],
