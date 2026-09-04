@@ -88,10 +88,16 @@ def hk_date(ms):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--store", default="B0812001")
+    ap.add_argument("--days-back", type=int, default=90,
+                    help="only load PO/GR whose booking date is within this many "
+                         "days of today (keeps the 5-min sync light)")
     ap.add_argument("--show-nobooking", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     load_run_env()
+
+    from datetime import date as _date
+    cutoff = (datetime.now(HK).date() - timedelta(days=a.days_back)).isoformat()
 
     sb_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     sb_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -120,6 +126,8 @@ def main():
         rq = float(x.get("receivedQuantity") or 0)
         bd = hk_date(x.get("bookedDate"))
         if bd:
+            if bd < cutoff:
+                continue  # older than the window we keep
             d = dated[(bd, sku)]; d["po"] += oq; d["gr"] += rq
         else:
             n = nobook[sku]; n["po"] += oq; n["gr"] += rq
@@ -146,8 +154,11 @@ def main():
     # already stored by upserting po/gr only would be complex; instead delete+insert
     # keeps po/gr authoritative. Disposal is loaded by a separate job that upserts
     # its own column, so run order: PO/GR first, then disposal.
+    # Only rewrite the window we just pulled (date >= cutoff); older archived rows
+    # stay. Scoping the delete also limits the brief gap to recent dates.
     sb.delete(f"{sb_url}/rest/v1/imax_daily",
-              params={"store_code": f"eq.{a.store}"}, timeout=60).raise_for_status()
+              params={"store_code": f"eq.{a.store}", "date": f"gte.{cutoff}"},
+              timeout=60).raise_for_status()
     for i in range(0, len(rows), 500):
         resp = sb.post(f"{sb_url}/rest/v1/imax_daily",
                        headers={"Prefer": "return=minimal"},
