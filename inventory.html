@@ -184,6 +184,10 @@ async function render(){
   const baseOf = dt => (gr[dt]>0 ? gr[dt] : (po[dt]>0 ? po[dt] : 9999));
 
   const t0=todayHK();
+  // Non-by-date IIMS: a single quantity that is today's sellable before 4PM (HK)
+  // and tomorrow's after 4PM. Place it on that date's row.
+  const hkHour = +new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Hong_Kong",hour:"2-digit",hour12:false}).format(new Date());
+  const iimsSingleDate = (!iimsHasBydate && iimsInfo) ? (hkHour < 16 ? t0 : addDays(t0,1)) : null;
   const start=addDays(t0,-state.back), end=addDays(t0,state.fwd);
   const rows=[]; let d=start;
   while(d<=end){ rows.push(d); d=addDays(d,1); }
@@ -202,7 +206,9 @@ async function render(){
     const availCls = avail<0 ? 'disp' : 'po';
     const iimsCell = iimsHasBydate
       ? (iims[dt]!=null ? `<td class="gr">${fmtN(iims[dt])}</td>` : '<td class="dim">–</td>')
-      : '<td class="dim">–</td>';
+      : (iimsSingleDate && dt===iimsSingleDate
+          ? `<td class="gr" title="非 by-date：${hkHour<16?'今日':'明日'}現貨">${fmtN(iimsInfo.quantity)}</td>`
+          : '<td class="dim">–</td>');
     const html = `<tr class="${isToday?'today':''}"><td>${dt}${isToday?' <span class="dim">(今日)</span>':''}</td>`+
       cell(po[dt],'po')+cell(gr[dt],'gr')+cell(disp[dt],'disp')+
       (sale[dt]?`<td class="sale">${fmtN(sale[dt])}</td>`:'<td class="dim">–</td>')+

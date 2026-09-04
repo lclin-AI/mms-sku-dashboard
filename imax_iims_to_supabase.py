@@ -20,6 +20,8 @@ from datetime import datetime, timezone, timedelta
 
 import requests
 
+NOW_ISO = datetime.now(timezone.utc).isoformat()
+
 IIMS = "https://iims-restful.shoalter.com/iims/s2s/v2/hybris/products/{}/stock-levels"
 HK = timezone(timedelta(hours=8))
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -95,7 +97,8 @@ def main():
             has = bool(di)
             sku_rows.append({"store_code": a.store, "sku_id": sku,
                              "quantity": data.get("quantity"), "has_bydate": has,
-                             "update_stock_time": data.get("updateStockTime")})
+                             "update_stock_time": data.get("updateStockTime"),
+                             "updated_at": NOW_ISO})
             for e in di:
                 d = iso(e.get("date"))
                 if d:
