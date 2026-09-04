@@ -107,7 +107,7 @@ const HEAD = { apikey: CFG.SUPABASE_ANON_KEY, Authorization: "Bearer " + CFG.SUP
 const $ = id => document.getElementById(id);
 const fmtN = n => (n===null||n===undefined) ? "" : Number(n).toLocaleString("en-US",{maximumFractionDigits:0});
 
-let state = { store: CFG.DEFAULT_STORE, sku: "", catalog: [], back: 7, fwd: 14 };
+let state = { store: CFG.DEFAULT_STORE, sku: "", catalog: [], back: 7, fwd: 14, showPast: false };
 
 async function api(path){ const r = await fetch(REST+path,{headers:HEAD});
   if(!r.ok) throw new Error(r.status+" "+await r.text()); return r.json(); }
@@ -190,7 +190,7 @@ async function render(){
 
   let tot={po:0,gr:0,sale:0};
   const cell=(v,cls)=> v===undefined||v===null ? '<td class="dim">–</td>' : `<td class="${cls}">${fmtN(v)}</td>`;
-  const body = rows.map(dt=>{
+  const rowObjs = rows.map(dt=>{
     const isToday = dt===t0;
     tot.po+=po[dt]||0; tot.gr+=gr[dt]||0; tot.sale+=sale[dt]||0;
     // Remaining for date D = physical stock at 6PM of the PREVIOUS day.
@@ -203,13 +203,19 @@ async function render(){
     const iimsCell = iimsHasBydate
       ? (iims[dt]!=null ? `<td class="gr">${fmtN(iims[dt])}</td>` : '<td class="dim">–</td>')
       : '<td class="dim">–</td>';
-    return `<tr class="${isToday?'today':''}"><td>${dt}${isToday?' <span class="dim">(今日)</span>':''}</td>`+
+    const html = `<tr class="${isToday?'today':''}"><td>${dt}${isToday?' <span class="dim">(今日)</span>':''}</td>`+
       cell(po[dt],'po')+cell(gr[dt],'gr')+cell(disp[dt],'disp')+
       (sale[dt]?`<td class="sale">${fmtN(sale[dt])}</td>`:'<td class="dim">–</td>')+
       (rem!=null?`<td>${fmtN(rem)}</td>`:'<td class="dim">–</td>')+
       `<td class="${hasBase?'':'dim'}" title="${hasBase?'':'無 PO/GR，Base=9999'}">${fmtN(base)}</td>`+
       `<td class="${availCls}">${fmtN(avail)}</td>`+iimsCell+`</tr>`;
-  }).join("");
+    return { dt, html, past: dt < t0 };
+  });
+  const pastN = rowObjs.filter(r=>r.past).length;
+  const toggle = pastN ? `<tr class="toggle"><td colspan="9" onclick="togglePast()"
+      style="cursor:pointer;color:var(--accent);font-weight:600">${
+      state.showPast ? '▾ 收起之前 '+pastN+' 日' : '▸ 顯示之前 '+pastN+' 日'}</td></tr>` : "";
+  const body = toggle + rowObjs.filter(r=>state.showPast || !r.past).map(r=>r.html).join("");
 
   const iimsHdr = iimsHasBydate ? "IIMS (by-date)"
     : (iimsInfo ? `IIMS 現貨 ${fmtN(iimsInfo.quantity)}` : "IIMS");
@@ -246,8 +252,9 @@ async function boot(){
 }
 $("storeSelect").onchange = async e=>{ state.store=e.target.value; state.sku=""; $("skuSearch").value="";
   await loadCatalog(); render(); };
+window.togglePast = ()=>{ state.showPast=!state.showPast; render(); };
 $("skuSearch").oninput = renderSkuOptions;
-$("skuSelect").onchange = e=>{ state.sku=e.target.value; render(); };
+$("skuSelect").onchange = e=>{ state.sku=e.target.value; state.showPast=false; render(); };
 $("rangeBtns").onclick = e=>{ const b=e.target.closest("button"); if(!b) return;
   state.back=+b.dataset.back; state.fwd=+b.dataset.fwd;
   [...e.currentTarget.children].forEach(x=>x.setAttribute("aria-pressed", x===b)); render(); };
