@@ -117,13 +117,24 @@ def main():
             continue
         loc = str(x.get("location") or "").upper()
         tx = x.get("txDescription")
-        keep = (loc.startswith("R")) if MODE == "R_LOCATION" else (tx == "sap_disposal")
-        if not keep:
-            continue
+        q = float(x.get("qty") or 0)
+        if MODE == "R_LOCATION":
+            # Net quantity moved to R-locations that day via location changes:
+            # stock moved INTO R (staged for disposal, +) MINUS stock moved back
+            # OUT of R that same day (un-staged, returned to a normal location, -).
+            # Exclude sap_disposal: that is the SAP write-off of the same stock,
+            # landing on a LATER day, and must not be double-counted or netted.
+            if not loc.startswith("R") or tx == "sap_disposal":
+                continue
+            val = q
+        else:  # SAP_DISPOSAL: the write-off itself (negative), reported positive
+            if tx != "sap_disposal":
+                continue
+            val = -q
         d = day(x.get("processDate"))
         if not d:
             continue
-        agg[(d, mc[len(prefix):])] += float(x.get("qty") or 0)
+        agg[(d, mc[len(prefix):])] += val
 
     rows = [{"store_code": a.store, "date": d, "sku_id": sku,
              "disposal_qty": round(q, 3)}

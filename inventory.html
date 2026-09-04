@@ -187,7 +187,7 @@ async function render(){
     </table></div>`;
   $("note").innerHTML =
     "PO/GR 按 <b>booking date</b>（無 booking 嘅訂單唔會落喺日期上）。已售按 <b>送貨日</b>，取自銷售 dashboard。"+
-    "棄置 = iMAX 移去 <b>R location 淨量</b>（可為正/負，因撈埋 change/issue 移動）。「剩餘」稍後接入。";
+    "棄置 = 當日<b>搬入 R location</b> − 當日<b>搬返出</b>（location change 淨量，唔計 sap_disposal write-off）。「剩餘」稍後接入。";
 }
 
 async function boot(){
