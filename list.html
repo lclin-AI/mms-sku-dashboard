@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SKU List</title>
+<script src="config.js"></script>
+<style>
+:root{ --bg:#f6f7f9; --panel:#fff; --ink:#14161a; --muted:#6b7280; --line:#e4e7ec;
+  --accent:#0f9d8f; --accent-soft:#e6f7f4; --head:#0f9d8f; }
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa3af; --line:#282d38;
+  --accent:#2dd4bf; --accent-soft:#12332e; --head:#2dd4bf; }}
+:root[data-theme="dark"]{ --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa3af;
+  --line:#282d38; --accent:#2dd4bf; --accent-soft:#12332e; --head:#2dd4bf; }
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 "Noto Sans HK",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 18px 60px}
+.nav a{color:var(--accent);text-decoration:none;font-size:13px;font-weight:600}
+h1{font-size:24px;margin:6px 0 2px;color:var(--head)}
+.sub{color:var(--muted);font-size:13px;margin:0 0 18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:12px}
+.field{display:flex;flex-direction:column;gap:5px}
+.field label{font-size:12px;color:var(--muted);font-weight:600}
+input,select{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px}
+#q{width:240px}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;user-select:none}
+.count{font-size:13px;color:var(--muted);margin:4px 2px 10px}
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:720px}
+th,td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{font-size:12px;color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--accent-soft)}
+.prod{display:flex;align-items:center;gap:10px;min-width:280px}
+.prod img{width:42px;height:42px;object-fit:cover;border-radius:6px;background:var(--line);flex:none}
+.prod .nm{line-height:1.25}
+.prod .brand{font-size:11px;color:var(--muted)}
+.tag{display:inline-block;font-size:11px;color:var(--accent);background:var(--accent-soft);
+  border:1px solid var(--line);border-radius:99px;padding:1px 8px;margin-left:6px}
+.code{color:var(--muted);font-variant-numeric:tabular-nums}
+.grp td{background:var(--accent-soft);font-weight:700;color:var(--head)}
+.off{opacity:.5}
+.empty{padding:44px;text-align:center;color:var(--muted)}
+.mut{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="nav"><a href="index.html">← 銷售 Dashboard</a> · <a href="inventory.html">庫存追蹤 →</a></div>
+  <h1 id="storeName">SKU 清單</h1>
+  <p class="sub">商品主檔 · 庫存總數（IIMS）· 可篩選 / 按類別分組</p>
+
+  <div class="panel">
+    <div class="controls">
+      <div class="field"><label for="storeSelect">店舖</label><select id="storeSelect"></select></div>
+      <div class="field"><label for="cat">類別</label><select id="cat"><option value="">全部類別</option></select></div>
+      <div class="field"><label for="q">搜尋 SKU 編號 / 名稱</label><input id="q" type="search" placeholder="編號或名稱…" autocomplete="off"></div>
+      <label class="chk"><input type="checkbox" id="grp"> 按類別分組</label>
+      <label class="chk"><input type="checkbox" id="onlyActive"> 只顯示上架</label>
+    </div>
+    <div class="count" id="count"></div>
+    <div id="content"><div class="empty">載入中…</div></div>
+  </div>
+</div>
+
+<script>
+const CFG = window.DASH_CONFIG || {};
+const REST = CFG.SUPABASE_URL + "/rest/v1";
+const HEAD = { apikey: CFG.SUPABASE_ANON_KEY, Authorization: "Bearer " + CFG.SUPABASE_ANON_KEY };
+const $ = id => document.getElementById(id);
+const fmtN = n => (n==null) ? "" : Number(n).toLocaleString("en-US",{maximumFractionDigits:0});
+function fmtTs(s){ if(!s||s.length<8) return ""; const p=s.padEnd(14,"0");
+  return `${p.slice(0,4)}-${p.slice(4,6)}-${p.slice(6,8)} ${p.slice(8,10)}:${p.slice(10,12)}`; }
+
+let state = { store: CFG.DEFAULT_STORE, rows: [] };
+
+async function api(p){ const r=await fetch(REST+p,{headers:HEAD}); if(!r.ok) throw new Error(r.status+" "+await r.text()); return r.json(); }
+
+async function loadStores(){
+  let s=[]; try{ s=[...new Set((await api("/imax_sku_master?select=store_code&limit=10000")).map(r=>r.store_code))]; }catch(e){}
+  if(!s.length) s=[state.store];
+  s.sort(); if(!s.includes(state.store)) state.store=s[0];
+  $("storeSelect").innerHTML=s.map(x=>`<option${x===state.store?" selected":""}>${x}</option>`).join("");
+}
+
+async function loadData(){
+  const [master, iims] = await Promise.all([
+    api(`/imax_sku_master?store_code=eq.${state.store}&select=sku_id,sku_code,name_zh,name_en,image_url,cat_l2,cat_l3,active&limit=20000`),
+    api(`/imax_iims_sku?store_code=eq.${state.store}&select=sku_id,quantity,update_stock_time&limit=20000`),
+  ]);
+  const stock={}; for(const r of iims) stock[r.sku_id]=r;
+  state.rows = master.map(m=>({ ...m,
+    qty: stock[m.sku_id] ? stock[m.sku_id].quantity : null,
+    ts:  stock[m.sku_id] ? stock[m.sku_id].update_stock_time : null }));
+  // category filter options (level 2)
+  const cats=[...new Set(state.rows.map(r=>r.cat_l2).filter(Boolean))].sort();
+  $("cat").innerHTML=`<option value="">全部類別</option>`+cats.map(c=>`<option>${c}</option>`).join("");
+}
+
+function rowHtml(r){
+  const nm = r.name_zh || r.name_en || r.sku_id;
+  const img = r.image_url ? `<img src="${r.image_url}" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span style="width:42px"></span>`;
+  return `<tr class="${r.active?'':'off'}" data-sku="${r.sku_id}">
+    <td><div class="prod">${img}<div class="nm">${nm}${r.cat_l3?`<span class="tag">${r.cat_l3}</span>`:''}<div class="brand">${r.active?'':'未上架 · '}${r.cat_l2||''}</div></div></div></td>
+    <td class="code">${r.sku_code||r.sku_id}</td>
+    <td class="num">${r.qty==null?'<span class="mut">–</span>':fmtN(r.qty)}</td>
+    <td class="mut">${fmtTs(r.ts)}</td></tr>`;
+}
+
+function render(){
+  const q=$("q").value.trim().toLowerCase();
+  const cat=$("cat").value;
+  const onlyA=$("onlyActive").checked;
+  let list=state.rows.filter(r=>
+    (!cat||r.cat_l2===cat) &&
+    (!onlyA||r.active) &&
+    (!q || (r.sku_id||"").toLowerCase().includes(q) || (r.sku_code||"").toLowerCase().includes(q)
+        || (r.name_zh||"").toLowerCase().includes(q) || (r.name_en||"").toLowerCase().includes(q)));
+  $("count").textContent = `${list.length} 個 SKU`+(cat?` · ${cat}`:"")+(onlyA?" · 只上架":"");
+  if(!list.length){ $("content").innerHTML='<div class="empty">冇符合嘅 SKU。</div>'; return; }
+
+  const head=`<thead><tr><th>商品</th><th>編號</th><th class="num">庫存總數</th><th>最後更新（庫存）</th></tr></thead>`;
+  let body;
+  if($("grp").checked){
+    const g={}; for(const r of list){ (g[r.cat_l2||"（無類別）"]=g[r.cat_l2||"（無類別）"]||[]).push(r); }
+    body = Object.keys(g).sort().map(cat=>
+      `<tr class="grp"><td colspan="4">${cat}（${g[cat].length}）</td></tr>`+
+      g[cat].sort((a,b)=>(b.qty||0)-(a.qty||0)).map(rowHtml).join("")).join("");
+  } else {
+    body = list.sort((a,b)=>(b.qty||0)-(a.qty||0)).map(rowHtml).join("");
+  }
+  $("content").innerHTML=`<div class="tbl-wrap"><table>${head}<tbody>${body}</tbody></table></div>`;
+  $("content").querySelectorAll("tr[data-sku]").forEach(tr=>
+    tr.onclick=()=>{ location.href="inventory.html?sku="+encodeURIComponent(tr.dataset.sku)+"&store="+encodeURIComponent(state.store); });
+}
+
+async function boot(){
+  if(!CFG.SUPABASE_URL||CFG.SUPABASE_URL.includes("REPLACE_ME")){ $("content").innerHTML='<div class="empty">未設定 Supabase。</div>'; return; }
+  try{
+    await loadStores(); $("storeName").textContent=state.store+" · SKU 清單";
+    await loadData(); render();
+  }catch(e){ $("content").innerHTML=`<div class="empty">讀 Supabase 失敗：<code>${String(e.message).slice(0,200)}</code></div>`; }
+}
+$("storeSelect").onchange=async e=>{ state.store=e.target.value; $("storeName").textContent=state.store+" · SKU 清單"; await loadData(); render(); };
+["q","cat","grp","onlyActive"].forEach(id=>$(id).addEventListener("input",render));
+boot();
+</script>
+</body>
+</html>

@@ -234,7 +234,14 @@ async function boot(){
   if(!CFG.SUPABASE_URL || CFG.SUPABASE_URL.includes("REPLACE_ME")){
     $("content").innerHTML='<div class="empty">未設定 Supabase（config.js）。</div>'; return; }
   try{
-    await loadStores(); await loadCatalog(); render();
+    const p = new URLSearchParams(location.search);
+    if (p.get("store")) state.store = p.get("store");
+    await loadStores();
+    if (p.get("sku")) state.sku = p.get("sku");
+    await loadCatalog();
+    if (state.sku){ $("skuSelect").value = state.sku; if($("skuSelect").value!==state.sku){ // not in options: add it
+        $("skuSelect").insertAdjacentHTML("beforeend", `<option value="${state.sku}" selected>${state.sku}</option>`);} }
+    render();
   }catch(e){ $("content").innerHTML=`<div class="empty">讀 Supabase 失敗：<code>${String(e.message).slice(0,200)}</code></div>`; }
 }
 $("storeSelect").onchange = async e=>{ state.store=e.target.value; state.sku=""; $("skuSearch").value="";

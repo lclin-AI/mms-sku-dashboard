@@ -35,6 +35,22 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 MODE = "R_LOCATION"   # or "SAP_DISPOSAL"
 
+# Exact disposal locations to record (provided by the user). Disposal = net qty
+# of location-change movements INTO any of these that day (in − moved back out),
+# excluding the sap_disposal write-off.
+DISPOSAL_LOCATIONS = {
+    "R008", "R668", "R669", "R674", "R675", "R676", "R677", "R678", "R679",
+    "R680", "R681", "R682", "R683", "R684", "R685", "R686", "R687", "R688",
+    "R689", "R690", "R691", "R692", "R693", "R694", "R695", "R696", "R697",
+    "R699", "X015", "X168", "X102", "R701", "R702", "R703", "R704", "R711",
+    "R712", "R713", "R714", "XPAC", "XSCC", "R004", "X713", "ROFF-TAC-CRAB",
+    "R014", "X016", "ROFF-TY-INTERLINK", "R511", "R512", "R513", "R514", "R515",
+    "R516", "R517", "R518", "R519", "R521", "R522", "R523", "R524", "R525",
+    "R526", "R527", "R540", "R541", "R542", "R543", "R544", "R545", "R546",
+    "R547", "R548", "R549", "R550", "R551", "R552", "R553", "R554", "R556",
+    "R557", "R558", "R559",
+}
+
 
 def load_run_env():
     p = os.path.join(HERE, "run.env")
@@ -119,12 +135,11 @@ def main():
         tx = x.get("txDescription")
         q = float(x.get("qty") or 0)
         if MODE == "R_LOCATION":
-            # Net quantity moved to R-locations that day via location changes:
-            # stock moved INTO R (staged for disposal, +) MINUS stock moved back
-            # OUT of R that same day (un-staged, returned to a normal location, -).
-            # Exclude sap_disposal: that is the SAP write-off of the same stock,
-            # landing on a LATER day, and must not be double-counted or netted.
-            if not loc.startswith("R") or tx == "sap_disposal":
+            # Net quantity moved to the listed disposal locations that day via
+            # location changes: moved INTO a disposal location (+) MINUS moved
+            # back OUT that same day (−). Exclude sap_disposal (SAP write-off of
+            # the same stock, lands on a later day).
+            if loc not in DISPOSAL_LOCATIONS or tx == "sap_disposal":
                 continue
             val = q
         else:  # SAP_DISPOSAL: the write-off itself (negative), reported positive

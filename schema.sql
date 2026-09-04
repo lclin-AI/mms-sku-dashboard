@@ -92,3 +92,14 @@ alter table imax_iims_sku enable row level security;
 alter table imax_iims_bydate enable row level security;
 create policy p2 on imax_iims_sku for select to anon, authenticated using (true);
 create policy p1 on imax_iims_bydate for select to anon, authenticated using (true);
+
+-- CMS master-file product data (name, image, category) for the SKU list page.
+-- Populated by imax_masterfile_to_supabase.py from the CMS masterFile API
+-- (brand 76471 for B0812001); slow-changing, daily refresh is enough.
+create table if not exists imax_sku_master (
+  store_code text not null, sku_id text not null, sku_code text, name_zh text,
+  name_en text, image_url text, cat_l1 text, cat_l2 text, cat_l3 text,
+  master_file text, active boolean, original_price numeric, discount_price numeric,
+  updated_at timestamptz not null default now(), primary key (store_code, sku_id));
+alter table imax_sku_master enable row level security;
+create policy m_read on imax_sku_master for select to anon, authenticated using (true);
