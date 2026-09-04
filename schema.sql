@@ -103,3 +103,13 @@ create table if not exists imax_sku_master (
   updated_at timestamptz not null default now(), primary key (store_code, sku_id));
 alter table imax_sku_master enable row level security;
 create policy m_read on imax_sku_master for select to anon, authenticated using (true);
+
+-- Express (倉存即送/EM) sales the Daily Order Report omits. Per SKU per delivery
+-- date, from /order/v2/consignments (productReadyMethod C) + consignmentDetails.
+-- Local (heavy). 已售 on the tracker = mms_sku_daily (standard) + this (express).
+create table if not exists mms_express_daily (
+  store_code text not null, delivery_date date not null, sku_id text not null,
+  qty numeric not null default 0, waybills integer not null default 0,
+  updated_at timestamptz not null default now(), primary key (store_code, delivery_date, sku_id));
+alter table mms_express_daily enable row level security;
+create policy e_read on mms_express_daily for select to anon, authenticated using (true);

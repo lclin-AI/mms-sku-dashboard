@@ -161,7 +161,7 @@ async function render(){
   $("subtitle").innerHTML = `<span class="badge">${state.sku}</span> ${c?(c.sku_name_zh||c.sku_name_en||""):""}`;
 
   const skuF = encodeURIComponent(state.sku);
-  const [imax, sales, stock6, iimsSku, iimsBd] = await Promise.all([
+  const [imax, sales, stock6, iimsSku, iimsBd, expressRows] = await Promise.all([
     api(`/imax_daily?store_code=eq.${state.store}&sku_id=eq.${skuF}`+
         `&select=date,po_qty,gr_qty,disposal_qty&limit=5000`),
     api(`/mms_sku_daily?store_code=eq.${state.store}&sku_id=eq.${skuF}`+
@@ -170,10 +170,14 @@ async function render(){
         `&select=date,phys_qty&limit=5000`),
     api(`/imax_iims_sku?store_code=eq.${state.store}&sku_id=eq.${skuF}&select=quantity,has_bydate,update_stock_time`),
     api(`/imax_iims_bydate?store_code=eq.${state.store}&sku_id=eq.${skuF}&select=date,quantity&limit=5000`),
+    api(`/mms_express_daily?store_code=eq.${state.store}&sku_id=eq.${skuF}&select=delivery_date,qty&limit=5000`).catch(()=>[]),
   ]);
   const po={},gr={},disp={},sale={},phys={},iims={};
+  // 已售 = standard (Daily Order Report, H orders) + express (EM, 倉存即送).
+  // The Daily Report omits express, so express is added from mms_express_daily.
   for(const r of imax){ po[r.date]=r.po_qty; gr[r.date]=r.gr_qty; if(r.disposal_qty!=null) disp[r.date]=r.disposal_qty; }
   for(const r of sales){ sale[r.delivery_date]=(sale[r.delivery_date]||0)+ (+r.qty); }
+  for(const r of (expressRows||[])){ sale[r.delivery_date]=(sale[r.delivery_date]||0)+ (+r.qty); }
   for(const r of stock6){ phys[r.date]=r.phys_qty; }
   for(const r of iimsBd){ iims[r.date]=r.quantity; }
   const iimsInfo = iimsSku[0] || null;
