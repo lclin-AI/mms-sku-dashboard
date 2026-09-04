@@ -161,7 +161,7 @@ async function render(){
   $("subtitle").innerHTML = `<span class="badge">${state.sku}</span> ${c?(c.sku_name_zh||c.sku_name_en||""):""}`;
 
   const skuF = encodeURIComponent(state.sku);
-  const [imax, sales, stock6, iimsSku, iimsBd, expressRows] = await Promise.all([
+  const [imax, sales, stock6, iimsSku, iimsBd, expressRows, snapMinR, snapMaxR] = await Promise.all([
     api(`/imax_daily?store_code=eq.${state.store}&sku_id=eq.${skuF}`+
         `&select=date,po_qty,gr_qty,disposal_qty&limit=5000`),
     api(`/mms_sku_daily?store_code=eq.${state.store}&sku_id=eq.${skuF}`+
@@ -171,7 +171,11 @@ async function render(){
     api(`/imax_iims_sku?store_code=eq.${state.store}&sku_id=eq.${skuF}&select=quantity,has_bydate,update_stock_time`),
     api(`/imax_iims_bydate?store_code=eq.${state.store}&sku_id=eq.${skuF}&select=date,quantity&limit=5000`),
     api(`/mms_express_daily?store_code=eq.${state.store}&sku_id=eq.${skuF}&select=delivery_date,qty&limit=5000`).catch(()=>[]),
+    api(`/imax_stock_6pm?store_code=eq.${state.store}&select=date&order=date.asc&limit=1`).catch(()=>[]),
+    api(`/imax_stock_6pm?store_code=eq.${state.store}&select=date&order=date.desc&limit=1`).catch(()=>[]),
   ]);
+  // dates on which a 4PM stock snapshot was actually taken (store-wide bounds):
+  const snapMin = snapMinR[0] && snapMinR[0].date, snapMax = snapMaxR[0] && snapMaxR[0].date;
   const po={},gr={},disp={},sale={},phys={},iims={};
   // 已售 = standard (Daily Order Report, H orders) + express (EM, 倉存即送).
   // The Daily Report omits express, so express is added from mms_express_daily.
@@ -201,8 +205,15 @@ async function render(){
   const rowObjs = rows.map(dt=>{
     const isToday = dt===t0;
     tot.po+=po[dt]||0; tot.gr+=gr[dt]||0; tot.sale+=sale[dt]||0;
-    // Remaining for date D = physical stock at 6PM of the PREVIOUS day.
-    const rem = phys[addDays(dt,-1)];
+    // Remaining for date D = physical stock at 4PM of the PREVIOUS day.
+    //  - snapshot has the SKU  -> that qty, but <=0 counts as no leftover (0)
+    //  - snapshot day taken but SKU absent -> 0 (sold out / no leftover)
+    //  - day not yet snapshotted (before 4PM) -> unknown (–)
+    const snapDate = addDays(dt,-1);
+    let rem;
+    if (phys[snapDate] != null) rem = Math.max(0, phys[snapDate]);
+    else if (snapMin && snapDate >= snapMin && snapDate <= snapMax) rem = 0;
+    else rem = null;
     const base = baseOf(dt);
     const hasBase = gr[dt]>0 || po[dt]>0;   // real base (not the 9999 fallback)
     // Available = Base − Disposal − Sold − Remaining
@@ -243,7 +254,7 @@ async function render(){
   $("note").innerHTML =
     "<b>Base</b> = 有 GR 用 GR，冇用 PO，都冇 = 9999。<b>可售</b> = Base − 棄置 − 已售 − 剩餘。<br>"+
     "PO/GR 按 <b>booking date</b>；已售按 <b>送貨日</b>；棄置 = 當日搬入 R − 搬返出（唔計 sap_disposal）。"+
-    "<b>剩餘</b> = 前一日 6PM 實物庫存（唔含 R/X location），由每日 18:00 快照，<b>只由今日起累積、過去日子冇</b>。";
+    "<b>剩餘</b> = 前一日 <b>4PM</b> 實物庫存（唔含 R/X location），每日 16:00 快照；≤0 或賣清當作 0（無 leftover），未到 4PM 嗰日顯示「–」。";
 }
 
 async function boot(){

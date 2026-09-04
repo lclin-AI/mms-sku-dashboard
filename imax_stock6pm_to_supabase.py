@@ -1,13 +1,13 @@
 """
-iMAX 6PM physical-stock snapshot -> Supabase, per SKU per day.
+iMAX 4PM physical-stock snapshot -> Supabase, per SKU per day.
 
 "Remaining" in the inventory tracker = actual physical stock at 6PM, EXCLUDING
 R & X locations (returns / picking-staging). This snapshots iMAX
 getStockInfoByLocation and sums physicalStock per SKU, excluding locations that
 start with R or X (also HSCC and imaxOnly rows, per the stock-health tooling).
 
-The snapshot is dated by the day it is taken (run this at ~18:00 daily). The
-tracker page shows, for date D, the snapshot from D-1 (yesterday's 6PM close).
+The snapshot is dated by the day it is taken (run this at ~16:00 daily). The
+tracker page shows, for date D, the snapshot from D-1 (yesterday's 4PM close).
 It cannot be backfilled: only days from the first run onward will have a value.
 
 MUST run locally on the internal network (iMAX is WAF + internal only).
