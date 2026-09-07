@@ -80,6 +80,15 @@ tr.today td{background:var(--today)}
 .adm-preview b{font-size:18px;font-variant-numeric:tabular-nums}
 .adm-msg{margin-top:12px;font-size:13px}
 .adm-err{color:#dc2626}.adm-ok{color:var(--po)}
+.freshbar{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;font-size:11.5px}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:99px;
+  padding:3px 10px;color:var(--muted);background:var(--panel)}
+.chip b{color:var(--ink);font-weight:600}
+.chip .dot{width:7px;height:7px;border-radius:99px;background:var(--po);flex:none}
+.chip.stale{border-color:#f59e0b;color:#b45309}
+.chip.stale .dot{background:#f59e0b}
+.chip.old{border-color:#dc2626;color:#dc2626}
+.chip.old .dot{background:#dc2626}
 </style>
 </head>
 <body>
@@ -120,6 +129,8 @@ tr.today td{background:var(--today)}
       <span><b class="disp">棄置</b> 移去 R/X location（待接）</span>
       <span><b class="sale">已售</b> dashboard 銷量（送貨日）</span>
     </div>
+
+    <div class="freshbar" id="freshbar" title="每個資料來源嘅最後更新時間"></div>
 
     <div id="content"><div class="empty">揀一個 SKU 開始。</div></div>
     <div class="note" id="note"></div>
@@ -314,6 +325,39 @@ async function render(){
     "<b>剩餘</b> = 前一日 <b>4PM</b> 實物庫存（唔含 R/X location），每日 16:00 快照；≤0 或賣清當作 0（無 leftover），未到 4PM 嗰日顯示「–」。";
 }
 
+// Per-source freshness. Each source populates a different Supabase table with an
+// updated_at; MMS refreshes in the cloud (~5 min) while iMAX/IIMS run locally, so
+// the cadences differ and staleness thresholds are per-source.
+const FRESH_SOURCES = [
+  { label: "標準",        table: "mms_sku_daily",   stale: 30,   old: 180  },
+  { label: "Express",     table: "mms_express_daily", stale: 30, old: 180  },
+  { label: "iMAX PO/GR/棄置", table: "imax_daily",   stale: 180,  old: 1080 },
+  { label: "剩餘4PM",     table: "imax_stock_6pm",  stale: 1560, old: 3000 },
+  { label: "IIMS",        table: "imax_iims_sku",   stale: 180,  old: 1080 },
+];
+function relTime(iso){
+  if(!iso) return "—";
+  const mins = (Date.now() - new Date(iso).getTime())/60000;
+  if(mins < 1) return "啱啱";
+  if(mins < 60) return Math.round(mins)+" 分鐘前";
+  if(mins < 1440) return Math.round(mins/60)+" 小時前";
+  return Math.round(mins/1440)+" 日前";
+}
+async function loadFreshness(){
+  const bar = $("freshbar");
+  const chips = await Promise.all(FRESH_SOURCES.map(async src=>{
+    let iso=null;
+    try{
+      const r = await api(`/${src.table}?store_code=eq.${state.store}&select=updated_at&order=updated_at.desc&limit=1`);
+      iso = r && r[0] ? r[0].updated_at : null;
+    }catch(e){}
+    const mins = iso ? (Date.now()-new Date(iso).getTime())/60000 : Infinity;
+    const cls = !iso ? "old" : mins>src.old ? "old" : mins>src.stale ? "stale" : "";
+    return `<span class="chip ${cls}"><span class="dot"></span><b>${src.label}</b> ${relTime(iso)}</span>`;
+  }));
+  bar.innerHTML = chips.join("");
+}
+
 async function boot(){
   if(!CFG.SUPABASE_URL || CFG.SUPABASE_URL.includes("REPLACE_ME")){
     $("content").innerHTML='<div class="empty">未設定 Supabase（config.js）。</div>'; return; }
@@ -326,10 +370,11 @@ async function boot(){
     if (state.sku){ $("skuSelect").value = state.sku; if($("skuSelect").value!==state.sku){ // not in options: add it
         $("skuSelect").insertAdjacentHTML("beforeend", `<option value="${state.sku}" selected>${state.sku}</option>`);} }
     render();
+    loadFreshness();
   }catch(e){ $("content").innerHTML=`<div class="empty">讀 Supabase 失敗：<code>${String(e.message).slice(0,200)}</code></div>`; }
 }
 $("storeSelect").onchange = async e=>{ state.store=e.target.value; state.sku=""; $("skuSearch").value="";
-  await loadCatalog(); render(); };
+  loadFreshness(); await loadCatalog(); render(); };
 window.togglePast = ()=>{ state.showPast=!state.showPast; render(); };
 $("skuSearch").oninput = renderSkuOptions;
 $("skuSelect").onchange = e=>{ state.sku=e.target.value; state.showPast=false; render(); };
