@@ -56,11 +56,33 @@ def main():
     if not (sb_url and sb_key):
         sys.exit("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY")
 
+    import base64, time as _t
+
+    def exp_left(t):
+        try:
+            p = json.loads(base64.urlsafe_b64decode(t.split(".")[1] + "=="))
+            return p.get("exp", 0) - _t.time()
+        except Exception:
+            return 9999  # opaque token; can't tell — treat as fresh
+
     print("minting MMS adjust token (headless login)...", flush=True)
     tok = mms_login.get_token()
     if not tok:
         sys.exit("no token")
-    print(f"token minted (len={len(tok)})", flush=True)
+    # The fast path reuses the saved browser session and can hand back a token
+    # already deep into its ~30-min life. If under 15 min remain, drop the saved
+    # session and do a full login so the stored token is genuinely fresh.
+    left = exp_left(tok)
+    if left < 15 * 60:
+        print(f"reused token only {int(left)//60} min left; forcing fresh login", flush=True)
+        try:
+            os.remove(os.environ["MMS_STATE_FILE"])
+        except Exception:
+            pass
+        tok = mms_login.get_token()
+        if not tok:
+            sys.exit("no token after re-login")
+    print(f"token minted (len={len(tok)}, ~{int(exp_left(tok))//60} min life)", flush=True)
 
     row = {"key": "mms_adjust_token", "value": tok,
            "updated_at": datetime.now(timezone.utc).isoformat()}

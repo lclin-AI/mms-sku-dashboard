@@ -19,7 +19,7 @@ Usage:
   python mms_express_to_supabase.py --store B0812001 --days 1
   python mms_express_to_supabase.py --store B0812001 --days 12
 """
-import argparse, json, os, sys
+import argparse, json, os, sys, time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
@@ -94,10 +94,25 @@ def main():
                 "deliveryMode": "STANDARD_DELIVERY", "sortColumn": "ISSUE_DATE",
                 "sortDirection": "DESC", "searchType": "ORDER_ID", "searchKeyword": "",
                 "pageNumber": page, "pageSize": 1000}
-        j = mms.post(f"{MMS}/order/v2/consignments", data=json.dumps(body), timeout=90).json()
-        resp = j.get("response")
+        # MMS occasionally returns a transient error (a string 'response', a 5xx,
+        # or a timeout) under load. Retry a few times before giving up so one
+        # hiccup does not fail the whole scheduled job.
+        resp = None
+        last = ""
+        for attempt in range(5):
+            try:
+                j = mms.post(f"{MMS}/order/v2/consignments",
+                             data=json.dumps(body), timeout=90).json()
+                resp = j.get("response")
+                if isinstance(resp, dict):
+                    break
+                last = f"{j.get('code')} {str(resp)[:150]}"
+            except Exception as e:
+                last = f"{type(e).__name__}: {str(e)[:120]}"
+            resp = None
+            time.sleep(2 * (attempt + 1))
         if not isinstance(resp, dict):
-            sys.exit(f"consignments list failed on page {page}: {j.get('code')} {str(resp)[:200]}")
+            sys.exit(f"consignments list failed on page {page} after retries: {last}")
         for x in resp.get("data") or []:
             code = x.get("consignmentCode") or ""
             # Skip "-OIX" waybills: they are 1P re-fulfillment copies of the base

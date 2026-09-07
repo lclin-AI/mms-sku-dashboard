@@ -26,8 +26,12 @@ $$;
 
 select cron.unschedule('mms-frequent-dispatch') where exists (select 1 from cron.job where jobname='mms-frequent-dispatch');
 select cron.unschedule('mms-backfill-dispatch') where exists (select 1 from cron.job where jobname='mms-backfill-dispatch');
+select cron.unschedule('mms-adjust-token-dispatch') where exists (select 1 from cron.job where jobname='mms-adjust-token-dispatch');
 
 select cron.schedule('mms-frequent-dispatch','*/5 * * * *', $$select public.dispatch_github_workflow('frequent.yml')$$);
 select cron.schedule('mms-backfill-dispatch','0 23 * * *',  $$select public.dispatch_github_workflow('daily-backfill.yml')$$);
+-- Keep the manual-adjust MMS token fresh (native GitHub cron is too unreliable
+-- for it, and an expired token makes every inventory adjust fail).
+select cron.schedule('mms-adjust-token-dispatch','*/5 * * * *', $$select public.dispatch_github_workflow('mms-adjust-token.yml')$$);
 
 select jobid, jobname, schedule, active from cron.job order by jobname;
