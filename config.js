@@ -5,4 +5,7 @@ window.DASH_CONFIG = {
   SUPABASE_URL: "https://owdshvgtkikubkphtfww.supabase.co",
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93ZHNodmd0a2lrdWJrcGh0Znd3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgzMjY5MDEsImV4cCI6MjEwMzkwMjkwMX0.tCglQJAexhO0qEXOSqx3XdOG7CXbx7NBuacHxiwsL3g",
   DEFAULT_STORE: "B0812001",
+  // Manual-adjust backend (Edge Function). The write itself is gated by a
+  // password checked server-side; this URL is not a secret.
+  ADJUST_FN_URL: "https://owdshvgtkikubkphtfww.supabase.co/functions/v1/mms-adjust",
 };

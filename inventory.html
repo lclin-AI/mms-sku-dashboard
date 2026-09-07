@@ -57,6 +57,29 @@ tr.today td{background:var(--today)}
 .rangebtns button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--muted);
   border-radius:8px;padding:8px 12px;cursor:pointer}
 .rangebtns button[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.adjbtn{font:inherit;font-weight:600;border:1px solid var(--accent);background:var(--accent-soft);color:var(--accent);
+  border-radius:8px;padding:8px 14px;cursor:pointer}
+.adjbtn:hover{background:var(--accent);color:#fff}
+.modal-back{position:fixed;inset:0;background:#0009;display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;width:100%;max-width:420px;
+  box-shadow:0 20px 60px #0006}
+.modal-h{font-size:16px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.modal label{font-size:12px;color:var(--muted);font-weight:600;display:block;margin:12px 0 5px}
+.modal input[type=number],.modal input[type=password]{width:100%}
+.modeseg{display:flex;gap:8px}
+.modeseg button{flex:1;font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--muted);
+  border-radius:8px;padding:9px 0;cursor:pointer}
+.modeseg button[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.modal-row{display:flex;gap:10px;margin-top:18px}
+.modal-row button{flex:1;font:inherit;font-weight:600;border-radius:8px;padding:10px 0;cursor:pointer;border:1px solid var(--line)}
+.btn-ghost{background:var(--panel);color:var(--muted)}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-danger{background:#dc2626;color:#fff;border-color:#dc2626}
+.adm-preview{margin-top:16px;padding:12px 14px;border-radius:10px;background:var(--accent-soft);border:1px solid var(--line);
+  font-size:14px;line-height:1.7}
+.adm-preview b{font-size:18px;font-variant-numeric:tabular-nums}
+.adm-msg{margin-top:12px;font-size:13px}
+.adm-err{color:#dc2626}.adm-ok{color:var(--po)}
 </style>
 </head>
 <body>
@@ -64,6 +87,9 @@ tr.today td{background:var(--today)}
   <div class="nav"><a href="index.html">← 銷售 Dashboard</a></div>
   <h1>SKU Inventory Tracker</h1>
   <p class="sub" id="subtitle">iMAX PO / GR · 棄置 · 銷售 — 逐日 by SKU</p>
+  <div id="adjustBar" style="display:none;margin:-10px 0 18px">
+    <button id="adjustBtn" class="adjbtn">✎ 手動調整庫存（MMS）</button>
+  </div>
 
   <div class="panel">
     <div class="controls">
@@ -97,6 +123,35 @@ tr.today td{background:var(--today)}
 
     <div id="content"><div class="empty">揀一個 SKU 開始。</div></div>
     <div class="note" id="note"></div>
+  </div>
+</div>
+
+<div id="adjModal" class="modal-back" style="display:none">
+  <div class="modal">
+    <div class="modal-h">✎ 手動調整庫存 <span id="admSku" class="badge"></span></div>
+    <div id="admName" class="sub" style="margin:-6px 0 4px"></div>
+
+    <label>動作</label>
+    <div class="modeseg" id="admMode">
+      <button data-mode="add" aria-pressed="true">加 Add</button>
+      <button data-mode="deduct" aria-pressed="false">減 Deduct</button>
+      <button data-mode="set" aria-pressed="false">設定 Set</button>
+    </div>
+
+    <label for="admQty" id="admQtyLabel">數量</label>
+    <input id="admQty" type="number" min="0" max="100000" step="1" placeholder="0">
+
+    <label for="admPw">密碼</label>
+    <input id="admPw" type="password" autocomplete="off" placeholder="調整密碼">
+
+    <div id="admPreview" class="adm-preview" style="display:none"></div>
+    <div id="admMsg" class="adm-msg"></div>
+
+    <div class="modal-row">
+      <button class="btn-ghost" id="admCancel">取消</button>
+      <button class="btn-primary" id="admPreviewBtn">預覽</button>
+      <button class="btn-danger" id="admConfirmBtn" style="display:none">確認寫入</button>
+    </div>
   </div>
 </div>
 
@@ -156,9 +211,10 @@ function renderSkuOptions(){
 }
 
 async function render(){
-  if(!state.sku){ $("content").innerHTML='<div class="empty">揀一個 SKU 開始。</div>'; $("note").textContent=""; return; }
+  if(!state.sku){ $("content").innerHTML='<div class="empty">揀一個 SKU 開始。</div>'; $("note").textContent=""; $("adjustBar").style.display="none"; return; }
   const c = state.catalog.find(x=>x.sku_id===state.sku);
   $("subtitle").innerHTML = `<span class="badge">${state.sku}</span> ${c?(c.sku_name_zh||c.sku_name_en||""):""}`;
+  $("adjustBar").style.display = CFG.ADJUST_FN_URL ? "" : "none";
 
   const skuF = encodeURIComponent(state.sku);
   const [imax, sales, stock6, iimsSku, iimsBd, expressRows, snapMinR, snapMaxR] = await Promise.all([
@@ -281,6 +337,84 @@ $("rangeBtns").onclick = e=>{ const b=e.target.closest("button"); if(!b) return;
   state.back=+b.dataset.back; state.fwd=+b.dataset.fwd;
   [...e.currentTarget.children].forEach(x=>x.setAttribute("aria-pressed", x===b)); render(); };
 boot();
+
+/* ---------- Manual adjust (MMS write via Edge Function) ---------- */
+let adj = { mode: "add", current: null };
+const admQtyLabel = {add:"加多少（數量）", deduct:"減多少（數量）", set:"設定為（數量）"};
+
+async function callAdjust(payload){
+  const r = await fetch(CFG.ADJUST_FN_URL, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json",
+              apikey: CFG.SUPABASE_ANON_KEY,
+              Authorization: "Bearer " + CFG.SUPABASE_ANON_KEY },
+    body: JSON.stringify(payload),
+  });
+  let j; try{ j = await r.json(); }catch{ j = {error:"回應格式錯誤"}; }
+  return { status:r.status, ...j };
+}
+const targetOf = (cur,mode,qty)=> mode==="set"?qty : mode==="add"?cur+qty : Math.max(0,cur-qty);
+
+function resetAdjustUI(){
+  adj.current=null;
+  $("admPreview").style.display="none"; $("admMsg").textContent=""; $("admMsg").className="adm-msg";
+  $("admConfirmBtn").style.display="none"; $("admPreviewBtn").style.display="";
+  $("admPreviewBtn").disabled=false; $("admPreviewBtn").textContent="預覽";
+}
+function openAdjust(){
+  const c = state.catalog.find(x=>x.sku_id===state.sku);
+  $("admSku").textContent = state.sku;
+  $("admName").textContent = c ? (c.sku_name_zh||c.sku_name_en||"") : "";
+  adj.mode="add";
+  [...$("admMode").children].forEach(b=>b.setAttribute("aria-pressed", b.dataset.mode==="add"));
+  $("admQtyLabel").textContent = admQtyLabel.add;
+  $("admQty").value=""; $("admPw").value="";
+  resetAdjustUI();
+  $("adjModal").style.display="flex"; $("admQty").focus();
+}
+function closeAdjust(){ $("adjModal").style.display="none"; }
+
+$("adjustBtn").onclick = openAdjust;
+$("admCancel").onclick = closeAdjust;
+$("adjModal").onclick = e=>{ if(e.target.id==="adjModal") closeAdjust(); };
+$("admMode").onclick = e=>{ const b=e.target.closest("button"); if(!b) return;
+  adj.mode=b.dataset.mode;
+  [...$("admMode").children].forEach(x=>x.setAttribute("aria-pressed", x===b));
+  $("admQtyLabel").textContent = admQtyLabel[adj.mode];
+  resetAdjustUI();
+};
+["admQty","admPw"].forEach(id=> $(id).oninput = resetAdjustUI);
+
+$("admPreviewBtn").onclick = async ()=>{
+  const qty = Number($("admQty").value); const pw = $("admPw").value;
+  const msg = $("admMsg");
+  if(!Number.isFinite(qty) || qty<0){ msg.className="adm-msg adm-err"; msg.textContent="請輸入有效數量。"; return; }
+  if(!pw){ msg.className="adm-msg adm-err"; msg.textContent="請輸入密碼。"; return; }
+  $("admPreviewBtn").disabled=true; $("admPreviewBtn").textContent="讀取現貨…"; msg.textContent="";
+  const res = await callAdjust({ action:"get", store_code:state.store, sku_id:state.sku, mode:adj.mode, qty, password:pw });
+  $("admPreviewBtn").disabled=false; $("admPreviewBtn").textContent="預覽";
+  if(!res.ok){ msg.className="adm-msg adm-err"; msg.textContent="✗ "+(res.error||("HTTP "+res.status)); return; }
+  adj.current = res.current;
+  const tgt = targetOf(res.current, adj.mode, qty);
+  const verb = {add:"加",deduct:"減",set:"設定"}[adj.mode];
+  $("admPreview").style.display="";
+  $("admPreview").innerHTML = `倉 ${res.warehouseSeqNo}｜現時 <b>${fmtN(res.current)}</b> `+
+    `— ${verb} ${fmtN(qty)} → 將變成 <b>${fmtN(tgt)}</b>`;
+  $("admPreviewBtn").style.display="none"; $("admConfirmBtn").style.display="";
+  $("admConfirmBtn").disabled=false; $("admConfirmBtn").textContent="確認寫入";
+};
+
+$("admConfirmBtn").onclick = async ()=>{
+  const qty = Number($("admQty").value); const pw = $("admPw").value; const msg = $("admMsg");
+  $("admConfirmBtn").disabled=true; $("admConfirmBtn").textContent="寫入中…"; msg.textContent="";
+  const res = await callAdjust({ store_code:state.store, sku_id:state.sku, mode:adj.mode, qty, password:pw });
+  if(!res.ok){ msg.className="adm-msg adm-err"; msg.textContent="✗ "+(res.error||("HTTP "+res.status));
+    $("admConfirmBtn").disabled=false; $("admConfirmBtn").textContent="確認寫入"; return; }
+  msg.className="adm-msg adm-ok";
+  msg.textContent = `✅ 已寫入：${fmtN(res.before)} → ${fmtN(res.after)}（倉 ${res.warehouseSeqNo}）。dashboard 數字下次同步後更新。`;
+  $("admConfirmBtn").style.display="none";
+  $("admPreview").style.display="none";
+};
 </script>
 </body>
 </html>
