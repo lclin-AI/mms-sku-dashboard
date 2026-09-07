@@ -395,12 +395,12 @@ async function callAdjust(payload){
                 apikey: CFG.SUPABASE_ANON_KEY,
                 Authorization: "Bearer " + CFG.SUPABASE_ANON_KEY },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(40000),
+      signal: AbortSignal.timeout(90000),
     });
     let j; try{ j = await r.json(); }catch{ j = {error:"回應格式錯誤 (HTTP "+r.status+")"}; }
     return { status:r.status, ...j };
   }catch(e){
-    return { status:0, error: e.name==="TimeoutError" ? "逾時 40 秒,請再試" : ("連線失敗: "+e.message) };
+    return { status:0, error: e.name==="TimeoutError" ? "逾時 90 秒,請再試" : ("連線失敗: "+e.message) };
   }
 }
 const targetOf = (cur,mode,qty)=> mode==="set"?qty : mode==="add"?cur+qty : Math.max(0,cur-qty);
@@ -448,7 +448,7 @@ $("admPreviewBtn").onclick = async ()=>{
   const tgt = targetOf(res.current, adj.mode, qty);
   const verb = {add:"加",deduct:"減",set:"設定"}[adj.mode];
   $("admPreview").style.display="";
-  $("admPreview").innerHTML = `倉 ${res.warehouseSeqNo}｜現時 <b>${fmtN(res.current)}</b> `+
+  $("admPreview").innerHTML = `現時 <b>${fmtN(res.current)}</b> `+
     `— ${verb} ${fmtN(qty)} → 將變成 <b>${fmtN(tgt)}</b>`;
   $("admPreviewBtn").style.display="none"; $("admConfirmBtn").style.display="";
   $("admConfirmBtn").disabled=false; $("admConfirmBtn").textContent="確認寫入";

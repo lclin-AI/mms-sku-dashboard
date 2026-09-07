@@ -120,79 +120,88 @@ Deno.serve(async (req) => {
 
     const H = { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" };
 
-    // 4) resolve uuid (scoped to our merchant)
-    step = "list-sku";
-    const listResp = await fetchT(MMS, {
-      method: "POST",
-      headers: H,
-      body: JSON.stringify({
-        pageNumber: 1, pageSize: 50, skuId: sku,
-        buCodeList: ["HKTV"], merchantId: MERCHANT_ID,
-      }),
-    });
-    if (listResp.status === 401) {
-      await triggerRefresh();
-      return json({ error: "token 被拒,已觸發更新,請稍後再試" }, 503);
-    }
-    const list = await listResp.json();
-    const content = (list?.response?.content || []).filter(
-      (x: any) => String(x.merchantId) === String(MERCHANT_ID) && String(x.skuId) === sku,
-    );
-    if (!content.length) return json({ error: `搵唔到 SKU ${sku}` }, 404);
-    const uuid = content[0].uuid;
-
-    // 5) detail -> current warehouse stock
-    const detail = async () => {
-      const d = await (await fetchT(`${MMS}/${uuid}`, { headers: H }, 30000)).json();
-      return (d?.response?.buInventoryDetails || []).find(
-        (x: any) => String(x.storeId) === store,
-      );
+    // 4) resolve uuid + current stock via the LIST — FAST (~0.3s). The product
+    // detail endpoint is very slow (~30-40s), so we never touch it on the
+    // preview and cache its (stable) warehouse structure for writes.
+    const SR_H = { apikey: KEY!, Authorization: `Bearer ${KEY}` };
+    const curOf = (it: any) => Number(it?.consignmentInventoryQty ?? 0);
+    const listOnce = async () => {
+      const r = await fetchT(MMS, {
+        method: "POST", headers: H,
+        body: JSON.stringify({ pageNumber: 1, pageSize: 50, skuId: sku,
+          buCodeList: ["HKTV"], merchantId: MERCHANT_ID }),
+      }, 20000);
+      if (r.status === 401) return { unauth: true } as any;
+      const j = await r.json();
+      const c = (j?.response?.content || []).filter(
+        (x: any) => String(x.merchantId) === String(MERCHANT_ID) && String(x.skuId) === sku);
+      return { item: c[0] } as any;
     };
-    step = "detail";
-    const bu = await detail();
-    if (!bu) return json({ error: "detail 無此 store 的庫存" }, 404);
-    const stocks = bu.stockInfoList || [];
-    if (stocks.length !== 1)
-      return json({ error: `此 SKU 有 ${stocks.length} 個倉,需人手處理` }, 409);
-    const st = stocks[0];
-    const before = st.stockQty;
+    step = "list-sku";
+    const l1 = await listOnce();
+    if (l1.unauth) { await triggerRefresh(); return json({ error: "token 被拒,已觸發更新,請稍後再試" }, 503); }
+    if (!l1.item) return json({ error: `搵唔到 SKU ${sku}` }, 404);
+    const uuid = l1.item.uuid;
+    const before = curOf(l1.item);
 
-    // read-only preview: return current stock without writing anything
+    // preview: current from the fast list, no slow detail
     if (b.action === "get") {
-      return json({
-        ok: true, action: "get", sku_id: sku, sku_name: content[0].skuNameCh,
-        current: before, warehouseSeqNo: st.warehouseSeqNo,
-      });
+      return json({ ok: true, action: "get", sku_id: sku, sku_name: l1.item.skuNameCh, current: before });
+    }
+
+    // 5) write: warehouse structure is stable per SKU — read a cached copy so
+    // only the FIRST write of a SKU pays the slow detail call.
+    const cacheKey = `struct:${store}:${sku}`;
+    let struct: any = null;
+    try {
+      const cr = await fetchT(`${SB}/rest/v1/app_settings?key=eq.${encodeURIComponent(cacheKey)}&select=value`, { headers: SR_H }, 10000);
+      const crows = await cr.json();
+      if (crows?.[0]?.value) struct = JSON.parse(crows[0].value);
+    } catch (_) { /* fall through to detail */ }
+
+    if (!struct) {
+      step = "detail";
+      const d = await (await fetchT(`${MMS}/${uuid}`, { headers: H }, 90000)).json();
+      const bu = (d?.response?.buInventoryDetails || []).find((x: any) => String(x.storeId) === store);
+      if (!bu) return json({ error: "detail 無此 store 的庫存" }, 404);
+      const stks = bu.stockInfoList || [];
+      if (stks.length !== 1) return json({ error: `此 SKU 有 ${stks.length} 個倉,需人手處理` }, 409);
+      struct = { warehouseSeqNo: stks[0].warehouseSeqNo, productReadyMethod: bu.productReadyMethod,
+                 storeId: bu.storeId, storeSkuId: bu.storeSkuId };
+      // best-effort cache write
+      fetchT(`${SB}/rest/v1/app_settings`, { method: "POST",
+        headers: { ...SR_H, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify({ key: cacheKey, value: JSON.stringify(struct) }) }, 10000).catch(() => {});
     }
 
     // 6) PUT the adjust
     step = "put";
     const payload = {
       uuid,
-      productReadyMethod: bu.productReadyMethod,
+      productReadyMethod: struct.productReadyMethod,
       warehouseList: [{
-        warehouseSeqNo: st.warehouseSeqNo,
-        storeId: bu.storeId,
-        storeSkuId: bu.storeSkuId,
+        warehouseSeqNo: struct.warehouseSeqNo,
+        storeId: struct.storeId,
+        storeSkuId: struct.storeSkuId,
         mode, qty,
       }],
     };
     const put = await fetchT(`${MMS}/warehouse`, {
       method: "PUT", headers: H, body: JSON.stringify(payload),
-    }, 30000);
+    }, 60000);
     const putBody = await put.text();
     if (put.status >= 300 || !putBody.includes("SUCCESS"))
       return json({ error: `MMS 拒絕: ${put.status} ${putBody.slice(0, 200)}` }, 502);
 
-    // 7) re-read
+    // 7) re-read via the fast list for the 'after'
     step = "reread";
-    const bu2 = await detail();
-    const after = bu2?.stockInfoList?.[0]?.stockQty;
+    const l2 = await listOnce();
+    const after = l2.item ? curOf(l2.item) : null;
 
     return json({
-      ok: true, sku_id: sku, sku_name: content[0].skuNameCh,
+      ok: true, sku_id: sku, sku_name: l1.item.skuNameCh,
       mode, qty, before, after,
-      warehouseSeqNo: st.warehouseSeqNo,
+      warehouseSeqNo: struct.warehouseSeqNo,
     });
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";
