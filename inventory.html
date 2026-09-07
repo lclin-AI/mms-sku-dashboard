@@ -343,15 +343,20 @@ let adj = { mode: "add", current: null };
 const admQtyLabel = {add:"加多少（數量）", deduct:"減多少（數量）", set:"設定為（數量）"};
 
 async function callAdjust(payload){
-  const r = await fetch(CFG.ADJUST_FN_URL, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json",
-              apikey: CFG.SUPABASE_ANON_KEY,
-              Authorization: "Bearer " + CFG.SUPABASE_ANON_KEY },
-    body: JSON.stringify(payload),
-  });
-  let j; try{ j = await r.json(); }catch{ j = {error:"回應格式錯誤"}; }
-  return { status:r.status, ...j };
+  try{
+    const r = await fetch(CFG.ADJUST_FN_URL, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json",
+                apikey: CFG.SUPABASE_ANON_KEY,
+                Authorization: "Bearer " + CFG.SUPABASE_ANON_KEY },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(40000),
+    });
+    let j; try{ j = await r.json(); }catch{ j = {error:"回應格式錯誤 (HTTP "+r.status+")"}; }
+    return { status:r.status, ...j };
+  }catch(e){
+    return { status:0, error: e.name==="TimeoutError" ? "逾時 40 秒,請再試" : ("連線失敗: "+e.message) };
+  }
 }
 const targetOf = (cur,mode,qty)=> mode==="set"?qty : mode==="add"?cur+qty : Math.max(0,cur-qty);
 
