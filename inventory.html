@@ -216,8 +216,9 @@ async function render(){
     else rem = null;
     const base = baseOf(dt);
     const hasBase = gr[dt]>0 || po[dt]>0;   // real base (not the 9999 fallback)
-    // Available = Base − Disposal − Sold − Remaining
-    const avail = base - (disp[dt]||0) - (sale[dt]||0) - (rem!=null?rem:0);
+    // Available = Base − Disposal − Sold + Remaining (yesterday's leftover is
+    // carried-over stock that is still sellable, so it is ADDED).
+    const avail = base - (disp[dt]||0) - (sale[dt]||0) + (rem!=null?rem:0);
     const availCls = avail<0 ? 'disp' : 'po';
     const iimsCell = iimsHasBydate
       ? (iims[dt]!=null ? `<td class="gr">${fmtN(iims[dt])}</td>` : '<td class="dim">–</td>')
@@ -243,7 +244,7 @@ async function render(){
   $("content").innerHTML = `<div class="tbl-wrap"><table>
     <thead><tr><th>Date</th><th>PO 數量</th><th>GR 數量</th><th>棄置數量</th>
       <th>已售出數量</th><th>剩餘數量</th><th title="有 GR 用 GR，冇用 PO，都冇 = 9999">Base</th>
-      <th title="Base − 棄置 − 已售 − 剩餘">可售數量</th>
+      <th title="Base − 棄置 − 已售 + 剩餘">可售數量</th>
       <th title="IIMS stock-levels reference">${iimsHdr}</th></tr></thead>
     <tbody>${body}</tbody>
     <tfoot><tr style="font-weight:650"><td>合計（${state.back}+${state.fwd} 日）</td>
@@ -252,7 +253,7 @@ async function render(){
       <td class="dim">–</td><td class="dim">–</td><td class="dim">–</td><td class="dim">–</td></tr></tfoot>
     </table></div>`;
   $("note").innerHTML =
-    "<b>Base</b> = 有 GR 用 GR，冇用 PO，都冇 = 9999。<b>可售</b> = Base − 棄置 − 已售 − 剩餘。<br>"+
+    "<b>Base</b> = 有 GR 用 GR，冇用 PO，都冇 = 9999。<b>可售</b> = Base − 棄置 − 已售 + 剩餘。<br>"+
     "PO/GR 按 <b>booking date</b>；已售按 <b>送貨日</b>；棄置 = 當日搬入 R − 搬返出（唔計 sap_disposal）。"+
     "<b>剩餘</b> = 前一日 <b>4PM</b> 實物庫存（唔含 R/X location），每日 16:00 快照；≤0 或賣清當作 0（無 leftover），未到 4PM 嗰日顯示「–」。";
 }
