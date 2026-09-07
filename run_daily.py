@@ -59,18 +59,38 @@ def main():
         log(f"FATAL login: {e}")
         return 2
 
+    # Run express too (MMS_EXPRESS=1). Both channels are MMS and share the one
+    # login above, so a single job refreshes ALL MMS sales (standard + express).
+    do_express = os.environ.get("MMS_EXPRESS", "").strip() in ("1", "true", "yes")
+
     failed = []
     for store in stores:
-        log(f"--- {store} (last {days} days) ---")
+        log(f"--- {store} standard (last {days} days) ---")
         r = subprocess.run(
             [sys.executable, os.path.join(HERE, "mms_to_supabase.py"),
              "--store", store, "--days", str(days)],
             env=os.environ.copy())
         if r.returncode != 0:
-            failed.append(store)
-            log(f"{store}: FAILED (exit {r.returncode})")
+            failed.append(f"{store}/standard")
+            log(f"{store} standard: FAILED (exit {r.returncode})")
         else:
-            log(f"{store}: ok")
+            log(f"{store} standard: ok")
+
+        if do_express:
+            log(f"--- {store} express (last {days} days) ---")
+            exp_cmd = [sys.executable, os.path.join(HERE, "mms_express_to_supabase.py"),
+                       "--store", store, "--days", str(days)]
+            # Frequent job caps the forward delivery window so a cold run fits the
+            # timeout; the daily backfill uses the full default (14) forward days.
+            fwd = os.environ.get("MMS_EXPRESS_FWD", "").strip()
+            if fwd:
+                exp_cmd += ["--fwd", fwd]
+            re_ = subprocess.run(exp_cmd, env=os.environ.copy())
+            if re_.returncode != 0:
+                failed.append(f"{store}/express")
+                log(f"{store} express: FAILED (exit {re_.returncode})")
+            else:
+                log(f"{store} express: ok")
         time.sleep(1)
 
     if failed:

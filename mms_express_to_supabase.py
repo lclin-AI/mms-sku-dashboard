@@ -178,10 +178,14 @@ def main():
     sb.headers.update({"apikey": sb_key, "Authorization": "Bearer " + sb_key,
                        "Content-Type": "application/json",
                        "Prefer": "resolution=merge-duplicates,return=minimal"})
-    # authoritative replace for the delivery-date window
+    # authoritative replace for the delivery-date window — bounded to [d0, d1]
+    # (the SAME window we pulled) so a short-forward run (e.g. the 5-min job) does
+    # NOT wipe further-out delivery dates that a wider run (the daily backfill)
+    # maintains.
     sb.delete(f"{sb_url}/rest/v1/mms_express_daily",
-              params={"store_code": f"eq.{a.store}",
-                      "delivery_date": f"gte.{d0.isoformat()}"}, timeout=60).raise_for_status()
+              params=[("store_code", f"eq.{a.store}"),
+                      ("delivery_date", f"gte.{d0.isoformat()}"),
+                      ("delivery_date", f"lte.{d1.isoformat()}")], timeout=60).raise_for_status()
     for i in range(0, len(rows), 500):
         resp = sb.post(f"{sb_url}/rest/v1/mms_express_daily", json=rows[i:i + 500], timeout=120)
         if resp.status_code >= 300:

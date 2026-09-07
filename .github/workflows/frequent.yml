@@ -19,6 +19,8 @@ jobs:
       SUPABASE_URL: https://owdshvgtkikubkphtfww.supabase.co
       MMS_STORES: B0812001
       MMS_DAYS: "1"          # today only — light
+      MMS_EXPRESS: "1"       # also refresh express sales in the same job
+      MMS_EXPRESS_FWD: "3"   # near-term forward window (keeps the 5-min run light)
       MMS_STATE_FILE: ${{ github.workspace }}/mms_state.json
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       MMS_USERCODE: ${{ secrets.MMS_USERCODE }}
@@ -40,6 +42,16 @@ jobs:
           path: mms_state.json
           key: mms-state-${{ github.run_id }}
           restore-keys: mms-state-
+
+      # Persist the express incremental cache (consignment SKU lines are
+      # immutable) so each run only details NEW consignments — otherwise a full
+      # re-detail every 5 min would blow the timeout.
+      - name: Restore express cache
+        uses: actions/cache@v4
+        with:
+          path: express_cache_*.json
+          key: express-cache-${{ github.run_id }}
+          restore-keys: express-cache-
 
       - name: Cache Playwright browser
         uses: actions/cache@v4
