@@ -198,6 +198,18 @@ Deno.serve(async (req) => {
     const l2 = await listOnce();
     const after = l2.item ? curOf(l2.item) : null;
 
+    // 8) record the adjustment in the history log (best-effort)
+    fetchT(`${SB}/rest/v1/adjust_log`, {
+      method: "POST",
+      headers: { ...SR_H, "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({
+        store_code: store, sku_id: sku, sku_name: l1.item.skuNameCh,
+        mode, qty, before_qty: before, after_qty: after,
+        warehouse: struct.warehouseSeqNo,
+        operator: typeof b.operator === "string" ? b.operator.slice(0, 60) : null,
+      }),
+    }, 10000).catch(() => {});
+
     return json({
       ok: true, sku_id: sku, sku_name: l1.item.skuNameCh,
       mode, qty, before, after,

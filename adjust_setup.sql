@@ -13,3 +13,27 @@ create table if not exists app_settings (
 
 alter table app_settings enable row level security;
 -- (intentionally no policy for anon/authenticated → only service_role can touch it)
+
+
+-- Manual-adjust history log. One row per successful inventory write, inserted by
+-- the mms-adjust Edge Function (service_role). Anon may READ it so the dashboard
+-- can show the history; only service_role INSERTs (no anon write policy).
+create table if not exists adjust_log (
+  id         bigint generated always as identity primary key,
+  ts         timestamptz not null default now(),
+  store_code text        not null,
+  sku_id     text        not null,
+  sku_name   text,
+  mode       text        not null,     -- add | deduct | set
+  qty        numeric     not null,
+  before_qty numeric,
+  after_qty  numeric,
+  warehouse  text,
+  operator   text
+);
+create index if not exists adjust_log_ts_idx on adjust_log (ts desc);
+create index if not exists adjust_log_sku_idx on adjust_log (store_code, sku_id, ts desc);
+
+alter table adjust_log enable row level security;
+drop policy if exists adjust_log_anon_read on adjust_log;
+create policy adjust_log_anon_read on adjust_log for select to anon, authenticated using (true);

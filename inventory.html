@@ -80,6 +80,11 @@ tr.today td{background:var(--today)}
 .adm-preview b{font-size:18px;font-variant-numeric:tabular-nums}
 .adm-msg{margin-top:12px;font-size:13px}
 .adm-err{color:#dc2626}.adm-ok{color:var(--po)}
+.histtbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.histtbl th,.histtbl td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.histtbl th:first-child,.histtbl td:first-child,.histtbl th:nth-child(2),.histtbl td:nth-child(2){text-align:left}
+.histtbl th{font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);position:sticky;top:0;background:var(--panel)}
+.mode-add{color:var(--po);font-weight:600}.mode-deduct{color:#dc2626;font-weight:600}.mode-set{color:var(--accent);font-weight:600}
 .freshbar{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;font-size:11.5px}
 .chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:99px;
   padding:3px 10px;color:var(--muted);background:var(--panel)}
@@ -98,6 +103,7 @@ tr.today td{background:var(--today)}
   <p class="sub" id="subtitle">iMAX PO / GR · 棄置 · 銷售 — 逐日 by SKU</p>
   <div id="adjustBar" style="display:none;margin:-10px 0 18px">
     <button id="adjustBtn" class="adjbtn">✎ 手動調整庫存（MMS）</button>
+    <button id="historyBtn" class="adjbtn" style="margin-left:8px">📋 調整記錄</button>
   </div>
 
   <div class="panel">
@@ -152,6 +158,9 @@ tr.today td{background:var(--today)}
     <label for="admQty" id="admQtyLabel">數量</label>
     <input id="admQty" type="number" min="0" max="100000" step="1" placeholder="0">
 
+    <label for="admOp">操作人（選填，會記入記錄）</label>
+    <input id="admOp" type="text" autocomplete="off" placeholder="例如你個名/花名">
+
     <label for="admPw">密碼</label>
     <input id="admPw" type="password" autocomplete="off" placeholder="調整密碼">
 
@@ -163,6 +172,18 @@ tr.today td{background:var(--today)}
       <button class="btn-primary" id="admPreviewBtn">預覽</button>
       <button class="btn-danger" id="admConfirmBtn" style="display:none">確認寫入</button>
     </div>
+  </div>
+</div>
+
+<div id="histModal" class="modal-back" style="display:none">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-h">📋 調整記錄
+      <label style="font-size:12px;font-weight:400;color:var(--muted);margin-left:auto;display:flex;align-items:center;gap:5px">
+        <input type="checkbox" id="histThisSku" style="width:auto"> 只睇呢隻 SKU
+      </label>
+    </div>
+    <div id="histBody" style="max-height:60vh;overflow:auto"></div>
+    <div class="modal-row"><button class="btn-ghost" id="histClose">關閉</button></div>
   </div>
 </div>
 
@@ -457,7 +478,7 @@ $("admPreviewBtn").onclick = async ()=>{
 $("admConfirmBtn").onclick = async ()=>{
   const qty = Number($("admQty").value); const pw = $("admPw").value; const msg = $("admMsg");
   $("admConfirmBtn").disabled=true; $("admConfirmBtn").textContent="寫入中…"; msg.textContent="";
-  const res = await callAdjust({ store_code:state.store, sku_id:state.sku, mode:adj.mode, qty, password:pw });
+  const res = await callAdjust({ store_code:state.store, sku_id:state.sku, mode:adj.mode, qty, password:pw, operator:($("admOp").value||"").trim()||undefined });
   if(!res.ok){ msg.className="adm-msg adm-err"; msg.textContent="✗ "+(res.error||("HTTP "+res.status));
     $("admConfirmBtn").disabled=false; $("admConfirmBtn").textContent="確認寫入"; return; }
   msg.className="adm-msg adm-ok";
@@ -465,6 +486,34 @@ $("admConfirmBtn").onclick = async ()=>{
   $("admConfirmBtn").style.display="none";
   $("admPreview").style.display="none";
 };
+
+/* ---------- Adjustment history log ---------- */
+async function loadHistory(){
+  const body = $("histBody");
+  body.innerHTML = '<div class="empty" style="padding:20px">載入中…</div>';
+  let q = `/adjust_log?store_code=eq.${state.store}&order=ts.desc&limit=100`+
+          `&select=ts,sku_id,sku_name,mode,qty,before_qty,after_qty,operator`;
+  if($("histThisSku").checked && state.sku) q += `&sku_id=eq.${encodeURIComponent(state.sku)}`;
+  let rows=[]; try{ rows = await api(q); }
+  catch(e){ body.innerHTML='<div class="empty" style="padding:20px">讀取失敗（未建 adjust_log 表？）</div>'; return; }
+  if(!rows.length){ body.innerHTML='<div class="empty" style="padding:20px">未有調整記錄。</div>'; return; }
+  const modeLabel={add:"加 Add",deduct:"減 Deduct",set:"設定 Set"};
+  const fmtTs=iso=>new Date(iso).toLocaleString("zh-HK",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});
+  body.innerHTML = `<table class="histtbl"><thead><tr>`+
+    `<th>時間</th><th>SKU</th><th>動作</th><th>數量</th><th>由 → 到</th><th>操作人</th></tr></thead><tbody>`+
+    rows.map(r=>`<tr>`+
+      `<td>${fmtTs(r.ts)}</td>`+
+      `<td><span class="badge">${r.sku_id}</span> ${(r.sku_name||"").slice(0,12)}</td>`+
+      `<td class="mode-${r.mode}">${modeLabel[r.mode]||r.mode}</td>`+
+      `<td>${fmtN(r.qty)}</td>`+
+      `<td>${fmtN(r.before_qty)} → <b>${fmtN(r.after_qty)}</b></td>`+
+      `<td>${r.operator?String(r.operator).slice(0,20):"—"}</td></tr>`).join("")+
+    `</tbody></table>`;
+}
+$("historyBtn").onclick = ()=>{ $("histModal").style.display="flex"; loadHistory(); };
+$("histClose").onclick = ()=>{ $("histModal").style.display="none"; };
+$("histModal").onclick = e=>{ if(e.target.id==="histModal") $("histModal").style.display="none"; };
+$("histThisSku").onchange = loadHistory;
 </script>
 </body>
 </html>
