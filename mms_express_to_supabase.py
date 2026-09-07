@@ -99,7 +99,12 @@ def main():
         if not isinstance(resp, dict):
             sys.exit(f"consignments list failed on page {page}: {j.get('code')} {str(resp)[:200]}")
         for x in resp.get("data") or []:
-            consigns.append((x.get("consignmentCode"), hk_date(x.get("deliveryDate"))))
+            code = x.get("consignmentCode") or ""
+            # Skip "-OIX" waybills: they are 1P re-fulfillment copies of the base
+            # consignment (same SKU quantity) and would double-count the sale.
+            if "OIX" in code.upper():
+                continue
+            consigns.append((code, hk_date(x.get("deliveryDate"))))
         pg = resp.get("pagination") or {}
         if page >= pg.get("numberOfPages", 1):
             break
