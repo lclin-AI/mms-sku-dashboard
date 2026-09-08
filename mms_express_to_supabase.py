@@ -84,54 +84,53 @@ def main():
     d1 = today + timedelta(days=a.fwd)   # deliveries can be scheduled forward
     wh = [f"{a.store}{i:02d}" for i in range(1, 100)]
 
-    # 1) list express consignments delivering in the window
+    # 1) list express consignments — pull ONE DELIVERY DATE at a time so
+    # pagination stays shallow. This store has ~5k express consignments/day, so
+    # a wide multi-day window paginates thousands deep and MMS errors on deep
+    # pages ("Unable to get information..."). Per-day = a handful of pages.
     consigns = []   # (consignmentCode, delivery_date)
-    page = 1
-    while True:
-        body = {"storefrontStoreCodes": [a.store], "productReadyMethods": ["C"],
-                "warehouseCodes": wh, "startDate": hk_ms(d0), "endDate": hk_ms(d1, True),
-                "status": ACTIVE_STATUS, "searchDateType": "DELIVERY_DATE",
-                "deliveryMode": "STANDARD_DELIVERY", "sortColumn": "ISSUE_DATE",
-                "sortDirection": "DESC", "searchType": "ORDER_ID", "searchKeyword": "",
-                "pageNumber": page, "pageSize": 1000}
-        # MMS occasionally returns a transient error (a string 'response', a 5xx,
-        # or a timeout) under load. Retry a few times before giving up so one
-        # hiccup does not fail the whole scheduled job.
-        resp = None
-        last = ""
-        for attempt in range(5):
-            try:
-                j = mms.post(f"{MMS}/order/v2/consignments",
-                             data=json.dumps(body), timeout=90).json()
-                resp = j.get("response")
-                if isinstance(resp, dict):
-                    break
-                last = f"{j.get('code')} {str(resp)[:150]}"
-            except Exception as e:
-                last = f"{type(e).__name__}: {str(e)[:120]}"
+    for i in range((d1 - d0).days + 1):
+        day = d0 + timedelta(days=i)
+        page = 1
+        while True:
+            body = {"storefrontStoreCodes": [a.store], "productReadyMethods": ["C"],
+                    "warehouseCodes": wh, "startDate": hk_ms(day), "endDate": hk_ms(day, True),
+                    "status": ACTIVE_STATUS, "searchDateType": "DELIVERY_DATE",
+                    "deliveryMode": "STANDARD_DELIVERY", "sortColumn": "ISSUE_DATE",
+                    "sortDirection": "DESC", "searchType": "ORDER_ID", "searchKeyword": "",
+                    "pageNumber": page, "pageSize": 1000}
+            # MMS occasionally returns a transient error; retry a few times.
             resp = None
-            time.sleep(2 * (attempt + 1))
-        if not isinstance(resp, dict):
-            sys.exit(f"consignments list failed on page {page} after retries: {last}")
-        for x in resp.get("data") or []:
-            code = x.get("consignmentCode") or ""
-            # Skip "-OIX" waybills: they are 1P re-fulfillment copies of the base
-            # consignment (same SKU quantity) and would double-count the sale.
-            if "OIX" in code.upper():
-                continue
-            # Skip STANDARD (H) orders that happen to have a productReadyMethod=C
-            # consignment: they are ALSO in the Daily Order Report (counted as
-            # standard), so keeping them here double-counts. Verified order-level:
-            # every H-prefixed "express" order for a day is present in the report.
-            # True express orders are M/EM. (order id may carry a "-<store>" suffix)
-            oid = str(x.get("orderId") or "").upper()
-            if oid.startswith("H"):
-                continue
-            consigns.append((code, hk_date(x.get("deliveryDate"))))
-        pg = resp.get("pagination") or {}
-        if page >= pg.get("numberOfPages", 1):
-            break
-        page += 1
+            last = ""
+            for attempt in range(5):
+                try:
+                    j = mms.post(f"{MMS}/order/v2/consignments",
+                                 data=json.dumps(body), timeout=90).json()
+                    resp = j.get("response")
+                    if isinstance(resp, dict):
+                        break
+                    last = f"{j.get('code')} {str(resp)[:150]}"
+                except Exception as e:
+                    last = f"{type(e).__name__}: {str(e)[:120]}"
+                resp = None
+                time.sleep(2 * (attempt + 1))
+            if not isinstance(resp, dict):
+                sys.exit(f"consignments list failed on {day} page {page} after retries: {last}")
+            for x in resp.get("data") or []:
+                code = x.get("consignmentCode") or ""
+                # Skip "-OIX" re-fulfillment copies (would double-count).
+                if "OIX" in code.upper():
+                    continue
+                # Skip STANDARD (H) orders that happen to have a prm=C consignment:
+                # they are ALSO in the Daily Order Report (counted as standard), so
+                # keeping them here double-counts. True express orders are M/EM.
+                if str(x.get("orderId") or "").upper().startswith("H"):
+                    continue
+                consigns.append((code, hk_date(x.get("deliveryDate"))))
+            pg = resp.get("pagination") or {}
+            if page >= pg.get("numberOfPages", 1):
+                break
+            page += 1
     print(f"{len(consigns)} express consignments in window", file=sys.stderr)
 
     # 2) SKU lines per consignment — INCREMENTAL: a consignment's SKU entries are
