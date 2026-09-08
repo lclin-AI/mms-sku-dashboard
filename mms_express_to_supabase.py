@@ -119,6 +119,14 @@ def main():
             # consignment (same SKU quantity) and would double-count the sale.
             if "OIX" in code.upper():
                 continue
+            # Skip STANDARD (H) orders that happen to have a productReadyMethod=C
+            # consignment: they are ALSO in the Daily Order Report (counted as
+            # standard), so keeping them here double-counts. Verified order-level:
+            # every H-prefixed "express" order for a day is present in the report.
+            # True express orders are M/EM. (order id may carry a "-<store>" suffix)
+            oid = str(x.get("orderId") or "").upper()
+            if oid.startswith("H"):
+                continue
             consigns.append((code, hk_date(x.get("deliveryDate"))))
         pg = resp.get("pagination") or {}
         if page >= pg.get("numberOfPages", 1):
