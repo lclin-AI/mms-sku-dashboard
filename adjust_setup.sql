@@ -29,7 +29,9 @@ create table if not exists adjust_log (
   before_qty numeric,
   after_qty  numeric,
   warehouse  text,
-  operator   text
+  operator   text,
+  status     text        not null default 'success',   -- success | fail
+  error      text
 );
 create index if not exists adjust_log_ts_idx on adjust_log (ts desc);
 create index if not exists adjust_log_sku_idx on adjust_log (store_code, sku_id, ts desc);

@@ -79,6 +79,8 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
   let step = "start";
+  let isWrite = false;
+  let failLog: ((err: string) => void) | null = null;
   try {
     let b: any;
     try { b = await req.json(); } catch { return json({ error: "bad json" }, 400); }
@@ -149,6 +151,22 @@ Deno.serve(async (req) => {
       return json({ ok: true, action: "get", sku_id: sku, sku_name: l1.item.skuNameCh, current: before });
     }
 
+    // log helper — records BOTH success and failure into adjust_log (best-effort)
+    const skuName = l1.item.skuNameCh;
+    const operator = typeof b.operator === "string" ? b.operator.slice(0, 60) : null;
+    const logAdjust = (status: string, error: string | null, afterV: number | null, wh: string | null) =>
+      fetchT(`${SB}/rest/v1/adjust_log`, {
+        method: "POST",
+        headers: { ...SR_H, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({
+          store_code: store, sku_id: sku, sku_name: skuName, mode, qty,
+          before_qty: before, after_qty: afterV, warehouse: wh, operator,
+          status, error: error ? String(error).slice(0, 200) : null,
+        }),
+      }, 10000).catch(() => {});
+    isWrite = true;
+    failLog = (err) => logAdjust("fail", err, null, null);
+
     // 5) write: warehouse structure is stable per SKU — read a cached copy so
     // only the FIRST write of a SKU pays the slow detail call.
     const cacheKey = `struct:${store}:${sku}`;
@@ -190,36 +208,30 @@ Deno.serve(async (req) => {
       method: "PUT", headers: H, body: JSON.stringify(payload),
     }, 60000);
     const putBody = await put.text();
-    if (put.status >= 300 || !putBody.includes("SUCCESS"))
-      return json({ error: `MMS 拒絕: ${put.status} ${putBody.slice(0, 200)}` }, 502);
+    if (put.status >= 300 || !putBody.includes("SUCCESS")) {
+      const msg = `MMS 拒絕: ${put.status} ${putBody.slice(0, 150)}`;
+      logAdjust("fail", msg, null, struct.warehouseSeqNo);
+      return json({ error: msg }, 502);
+    }
 
     // 7) re-read via the fast list for the 'after'
     step = "reread";
     const l2 = await listOnce();
     const after = l2.item ? curOf(l2.item) : null;
 
-    // 8) record the adjustment in the history log (best-effort)
-    fetchT(`${SB}/rest/v1/adjust_log`, {
-      method: "POST",
-      headers: { ...SR_H, "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({
-        store_code: store, sku_id: sku, sku_name: l1.item.skuNameCh,
-        mode, qty, before_qty: before, after_qty: after,
-        warehouse: struct.warehouseSeqNo,
-        operator: typeof b.operator === "string" ? b.operator.slice(0, 60) : null,
-      }),
-    }, 10000).catch(() => {});
+    // 8) record the successful adjustment (best-effort)
+    logAdjust("success", null, after, struct.warehouseSeqNo);
 
     return json({
-      ok: true, sku_id: sku, sku_name: l1.item.skuNameCh,
+      ok: true, sku_id: sku, sku_name: skuName,
       mode, qty, before, after,
       warehouseSeqNo: struct.warehouseSeqNo,
     });
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";
-    return json({
-      error: aborted ? `逾時（step: ${step}）— MMS 回應太慢或連唔到` : `錯誤（step: ${step}）: ${String(e).slice(0, 150)}`,
-      step,
-    }, aborted ? 504 : 500);
+    const errMsg = aborted ? `逾時（step: ${step}）— MMS 回應太慢或連唔到` : `錯誤（step: ${step}）: ${String(e).slice(0, 150)}`;
+    // record write attempts that failed after we knew the SKU/current value
+    if (isWrite && failLog) failLog(errMsg);
+    return json({ error: errMsg, step }, aborted ? 504 : 500);
   }
 });

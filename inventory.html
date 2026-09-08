@@ -492,22 +492,31 @@ async function loadHistory(){
   const body = $("histBody");
   body.innerHTML = '<div class="empty" style="padding:20px">載入中…</div>';
   let q = `/adjust_log?store_code=eq.${state.store}&order=ts.desc&limit=100`+
-          `&select=ts,sku_id,sku_name,mode,qty,before_qty,after_qty,operator`;
+          `&select=ts,sku_id,sku_name,mode,qty,before_qty,after_qty,operator,status,error`;
   if($("histThisSku").checked && state.sku) q += `&sku_id=eq.${encodeURIComponent(state.sku)}`;
   let rows=[]; try{ rows = await api(q); }
   catch(e){ body.innerHTML='<div class="empty" style="padding:20px">讀取失敗（未建 adjust_log 表？）</div>'; return; }
   if(!rows.length){ body.innerHTML='<div class="empty" style="padding:20px">未有調整記錄。</div>'; return; }
   const modeLabel={add:"加 Add",deduct:"減 Deduct",set:"設定 Set"};
   const fmtTs=iso=>new Date(iso).toLocaleString("zh-HK",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false});
+  const esc=s=>String(s||"").replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
   body.innerHTML = `<table class="histtbl"><thead><tr>`+
-    `<th>時間</th><th>SKU</th><th>動作</th><th>數量</th><th>由 → 到</th><th>操作人</th></tr></thead><tbody>`+
-    rows.map(r=>`<tr>`+
-      `<td>${fmtTs(r.ts)}</td>`+
-      `<td><span class="badge">${r.sku_id}</span> ${(r.sku_name||"").slice(0,12)}</td>`+
-      `<td class="mode-${r.mode}">${modeLabel[r.mode]||r.mode}</td>`+
-      `<td>${fmtN(r.qty)}</td>`+
-      `<td>${fmtN(r.before_qty)} → <b>${fmtN(r.after_qty)}</b></td>`+
-      `<td>${r.operator?String(r.operator).slice(0,20):"—"}</td></tr>`).join("")+
+    `<th>狀態</th><th>時間</th><th>SKU</th><th>動作</th><th>數量</th><th>由 → 到</th><th>操作人</th></tr></thead><tbody>`+
+    rows.map(r=>{
+      const ok = r.status !== "fail";
+      const badge = ok ? `<span style="color:var(--po);font-weight:700">✓</span>`
+        : `<span style="color:#dc2626;font-weight:700" title="${esc(r.error)}">✗</span>`;
+      const toTo = ok ? `${fmtN(r.before_qty)} → <b>${fmtN(r.after_qty)}</b>`
+        : `<span class="dim" title="${esc(r.error)}">${fmtN(r.before_qty)} → 失敗</span>`;
+      return `<tr${ok?"":' style="opacity:.8"'}>`+
+        `<td style="text-align:center">${badge}</td>`+
+        `<td>${fmtTs(r.ts)}</td>`+
+        `<td><span class="badge">${r.sku_id}</span> ${esc((r.sku_name||"").slice(0,12))}</td>`+
+        `<td class="mode-${r.mode}">${modeLabel[r.mode]||r.mode}</td>`+
+        `<td>${fmtN(r.qty)}</td>`+
+        `<td>${toTo}</td>`+
+        `<td>${r.operator?esc(String(r.operator).slice(0,20)):"—"}</td></tr>`;
+    }).join("")+
     `</tbody></table>`;
 }
 $("historyBtn").onclick = ()=>{ $("histModal").style.display="flex"; loadHistory(); };
