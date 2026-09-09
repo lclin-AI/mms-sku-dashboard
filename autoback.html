@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自動補貨總覽</title>
+<script src="config.js"></script>
+<style>
+:root{ --bg:#f6f7f9; --panel:#fff; --ink:#14161a; --muted:#6b7280; --line:#e4e7ec;
+  --accent:#4f46e5; --accent-soft:#eef2ff; --po:#0d9488; --disp:#b45309; }
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa3af; --line:#282d38;
+  --accent:#8b8cf9; --accent-soft:#20233340; --po:#2dd4bf; --disp:#fbbf24; }}
+:root[data-theme="dark"]{ --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa3af; --line:#282d38;
+  --accent:#8b8cf9; --accent-soft:#20233340; --po:#2dd4bf; --disp:#fbbf24; }
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 "Noto Sans HK",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:26px 18px 60px}
+h1{font-size:22px;margin:0 0 2px} .sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+.nav a{color:var(--accent);text-decoration:none;font-size:13px;font-weight:600;margin-right:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;padding:7px 12px;cursor:pointer}
+.tbl-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:760px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600}
+tbody tr:hover{background:var(--accent-soft)}
+.badge{display:inline-block;background:var(--accent-soft);color:var(--accent);border:1px solid var(--line);
+  border-radius:99px;padding:2px 9px;font-size:11px;font-weight:600}
+.on{color:var(--po);font-weight:600}.off{color:var(--muted)}
+.pos{color:var(--po)}.added{color:var(--accent);font-weight:600}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+.dim{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="nav"><a href="inventory.html">← 庫存 Tracker</a><a href="index.html">銷售 Dashboard</a></div>
+  <h1>🔄 自動補貨總覽</h1>
+  <p class="sub">所有 set 咗自動補貨嘅 SKU。增量 = dashboard 已售喺送貨日 D 之後、每 5 分鐘 sync 之間嘅變化。</p>
+  <div class="panel">
+    <div class="bar">
+      <button id="refresh">↻ 重新整理</button>
+      <label style="font-size:13px;color:var(--muted)"><input type="checkbox" id="auto" checked> 每 60 秒自動更新</label>
+      <span id="updated" class="dim" style="font-size:12px;margin-left:auto"></span>
+    </div>
+    <div class="tbl-wrap"><div id="content"><div class="empty">載入中…</div></div></div>
+  </div>
+</div>
+<script>
+const CFG = window.DASH_CONFIG || {};
+const REST = CFG.SUPABASE_URL + "/rest/v1";
+const HEAD = { apikey: CFG.SUPABASE_ANON_KEY, Authorization: "Bearer " + CFG.SUPABASE_ANON_KEY };
+const $ = id => document.getElementById(id);
+const fmtN = n => (n===null||n===undefined) ? "–" : Number(n).toLocaleString("en-US",{maximumFractionDigits:0});
+const api = p => fetch(REST+p,{headers:HEAD}).then(r=>r.json());
+function relTime(iso){ if(!iso) return "–"; const m=(Date.now()-new Date(iso).getTime())/60000;
+  if(m<1) return "啱啱"; if(m<60) return Math.round(m)+" 分鐘前"; if(m<1440) return Math.round(m/60)+" 小時前"; return Math.round(m/1440)+" 日前"; }
+
+async function load(){
+  const store = CFG.DEFAULT_STORE;
+  let cfg=[], st=[], cat=[];
+  try{
+    [cfg, st, cat] = await Promise.all([
+      api(`/autoback_config?store_code=eq.${store}&order=enabled.desc,sku_id.asc&select=sku_id,enabled,delivery_date,expected_qty,updated_at`),
+      api(`/autoback_state?store_code=eq.${store}&select=sku_id,last_incremental,last_added,last_run_at,sold_after_d`),
+      api(`/mms_sku_catalog?store_code=eq.${store}&select=sku_id,sku_name_zh,sku_name_en&limit=10000`).catch(()=>[]),
+    ]);
+  }catch(e){ $("content").innerHTML=`<div class="empty">讀取失敗（未建 autoback 表？）</div>`; return; }
+  if(!Array.isArray(cfg) || !cfg.length){ $("content").innerHTML='<div class="empty">仲未有 SKU set 自動補貨。去庫存 Tracker 揀 SKU → 🔄 自動補貨 設定。</div>'; $("updated").textContent=""; return; }
+  const sMap={}; (Array.isArray(st)?st:[]).forEach(r=>sMap[r.sku_id]=r);
+  const nMap={}; (Array.isArray(cat)?cat:[]).forEach(r=>nMap[r.sku_id]=r.sku_name_zh||r.sku_name_en||"");
+  $("content").innerHTML = `<table><thead><tr>`+
+    `<th>SKU</th><th>名</th><th>狀態</th><th>送貨日 D</th><th>預期 Q</th><th>最新增量</th><th>已補</th><th>最後跑</th></tr></thead><tbody>`+
+    cfg.map(c=>{ const s=sMap[c.sku_id]||{};
+      return `<tr>`+
+        `<td><span class="badge">${c.sku_id}</span></td>`+
+        `<td>${(nMap[c.sku_id]||"").slice(0,16)}</td>`+
+        `<td class="${c.enabled?'on':'off'}">${c.enabled?'🟢 開啟':'⚪ 關'}</td>`+
+        `<td>${c.delivery_date}</td>`+
+        `<td>${fmtN(c.expected_qty)}</td>`+
+        `<td class="${(s.last_incremental>0)?'pos':''}">${fmtN(s.last_incremental)}</td>`+
+        `<td class="${(s.last_added>0)?'added':''}">${fmtN(s.last_added)}</td>`+
+        `<td class="dim">${relTime(s.last_run_at)}</td></tr>`;
+    }).join("")+`</tbody></table>`;
+  $("updated").textContent = "更新於 "+new Date().toLocaleTimeString("zh-HK",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+}
+$("refresh").onclick = load;
+let timer=setInterval(()=>{ if($("auto").checked) load(); }, 60000);
+load();
+</script>
+</body>
+</html>
