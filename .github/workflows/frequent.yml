@@ -21,6 +21,8 @@ jobs:
       MMS_DAYS: "1"          # today only — light
       MMS_EXPRESS: "1"       # also refresh express sales in the same job
       MMS_EXPRESS_FWD: "3"   # near-term forward window (keeps the 5-min run light)
+      MMS_AUTOBACK: "1"      # run auto add-back (only writes for enabled SKUs)
+      ADJUST_PASSWORD: ${{ secrets.ADJUST_PASSWORD }}
       MMS_STATE_FILE: ${{ github.workspace }}/mms_state.json
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       MMS_USERCODE: ${{ secrets.MMS_USERCODE }}

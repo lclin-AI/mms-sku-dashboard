@@ -93,6 +93,14 @@ def main():
                 log(f"{store} express: ok")
         time.sleep(1)
 
+    # Auto add-back (MMS_AUTOBACK=1): after sales are synced, compute each
+    # configured SKU's incremental and add it back to MMS for enabled ones.
+    if os.environ.get("MMS_AUTOBACK", "").strip() in ("1", "true", "yes"):
+        log("--- auto add-back ---")
+        rb = subprocess.run([sys.executable, os.path.join(HERE, "autoback.py")],
+                            env=os.environ.copy())
+        log(f"autoback: {'ok' if rb.returncode == 0 else 'FAILED exit ' + str(rb.returncode)}")
+
     if failed:
         log(f"DONE with failures: {', '.join(failed)}")
         return 1

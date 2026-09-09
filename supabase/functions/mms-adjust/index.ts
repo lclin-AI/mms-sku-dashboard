@@ -90,24 +90,46 @@ Deno.serve(async (req) => {
     if (!pw) return json({ error: "server not configured (ADJUST_PASSWORD)" }, 500);
     if (b.password !== pw) return json({ error: "密碼錯誤" }, 401);
 
-    // 2) validate input
+    // 2) validate store/sku
     const store = String(b.store_code || "");
     const sku = String(b.sku_id || "");
-    const mode = String(b.mode || "");
-    const qty = Number(b.qty);
     if (!ALLOWED_STORES.has(store)) return json({ error: `store ${store} 不允許` }, 400);
     if (!sku) return json({ error: "missing sku_id" }, 400);
+
+    const SB = Deno.env.get("SUPABASE_URL");
+    const KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const SR_H = { apikey: KEY!, Authorization: `Bearer ${KEY}` };
+
+    let mode = String(b.mode || "");
+    let qty = Number(b.qty);
+
+    // autoback config write (password-gated). If enabling, fall through to set
+    // MMS inventory to the expected qty.
+    if (b.action === "autoback_config") {
+      const D = String(b.delivery_date || "");
+      const Q = Number(b.expected_qty);
+      const enabled = !!b.enabled;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(D)) return json({ error: "delivery_date 格式錯" }, 400);
+      if (!Number.isFinite(Q) || Q < 0 || Q > 100000) return json({ error: "expected_qty 0–100000" }, 400);
+      await fetchT(`${SB}/rest/v1/autoback_config`, {
+        method: "POST",
+        headers: { ...SR_H, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+        body: JSON.stringify({ store_code: store, sku_id: sku, enabled, delivery_date: D,
+                               expected_qty: Q, updated_at: new Date().toISOString() }),
+      }, 10000);
+      if (!enabled) return json({ ok: true, action: "autoback_config", enabled: false });
+      mode = "set"; qty = Q;   // enabling → set MMS = Q via the write path below
+    }
+
     if (!MODES.has(mode)) return json({ error: "mode 必須 add/deduct/set" }, 400);
     if (!Number.isFinite(qty) || qty < 0 || qty > 100000)
       return json({ error: "qty 必須 0–100000" }, 400);
 
     // 3) token
     step = "read-token";
-    const SB = Deno.env.get("SUPABASE_URL");
-    const KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const sr = await fetchT(
       `${SB}/rest/v1/app_settings?key=eq.mms_adjust_token&select=value,updated_at`,
-      { headers: { apikey: KEY!, Authorization: `Bearer ${KEY}` } }, 10000,
+      { headers: SR_H }, 10000,
     );
     const rows = await sr.json();
     const tok = rows?.[0]?.value;
@@ -125,7 +147,6 @@ Deno.serve(async (req) => {
     // 4) resolve uuid + current stock via the LIST — FAST (~0.3s). The product
     // detail endpoint is very slow (~30-40s), so we never touch it on the
     // preview and cache its (stable) warehouse structure for writes.
-    const SR_H = { apikey: KEY!, Authorization: `Bearer ${KEY}` };
     const curOf = (it: any) => Number(it?.consignmentInventoryQty ?? 0);
     const listOnce = async () => {
       const r = await fetchT(MMS, {

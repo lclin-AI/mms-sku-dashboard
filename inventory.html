@@ -103,6 +103,7 @@ tr.today td{background:var(--today)}
   <p class="sub" id="subtitle">iMAX PO / GR · 棄置 · 銷售 — 逐日 by SKU</p>
   <div id="adjustBar" style="display:none;margin:-10px 0 18px">
     <button id="adjustBtn" class="adjbtn">✎ 手動調整庫存（MMS）</button>
+    <button id="autobackBtn" class="adjbtn" style="margin-left:8px">🔄 自動補貨</button>
     <button id="historyBtn" class="adjbtn" style="margin-left:8px">📋 調整記錄</button>
   </div>
 
@@ -171,6 +172,33 @@ tr.today td{background:var(--today)}
       <button class="btn-ghost" id="admCancel">取消</button>
       <button class="btn-primary" id="admPreviewBtn">預覽</button>
       <button class="btn-danger" id="admConfirmBtn" style="display:none">確認寫入</button>
+    </div>
+  </div>
+</div>
+
+<div id="abModal" class="modal-back" style="display:none">
+  <div class="modal">
+    <div class="modal-h">🔄 自動補貨 <span id="abSku" class="badge"></span></div>
+    <div id="abName" class="sub" style="margin:-6px 0 8px"></div>
+    <div id="abStatus" class="adm-preview" style="display:none"></div>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:14px;color:var(--ink)">
+      <input type="checkbox" id="abEnabled" style="width:auto"> 開啟自動補貨
+    </label>
+
+    <label for="abDate">送貨日 D（只補 D 之後日子賣出嘅量)</label>
+    <input id="abDate" type="date">
+
+    <label for="abQty">預期銷量 Q（開啟時 set MMS = Q,單次補貨上限亦係 Q)</label>
+    <input id="abQty" type="number" min="0" max="100000" step="1" placeholder="0">
+
+    <label for="abPw">密碼</label>
+    <input id="abPw" type="password" autocomplete="off" placeholder="調整密碼">
+
+    <div id="abMsg" class="adm-msg"></div>
+    <div class="modal-row">
+      <button class="btn-ghost" id="abCancel">取消</button>
+      <button class="btn-primary" id="abSave">儲存</button>
     </div>
   </div>
 </div>
@@ -523,6 +551,41 @@ $("historyBtn").onclick = ()=>{ $("histModal").style.display="flex"; loadHistory
 $("histClose").onclick = ()=>{ $("histModal").style.display="none"; };
 $("histModal").onclick = e=>{ if(e.target.id==="histModal") $("histModal").style.display="none"; };
 $("histThisSku").onchange = loadHistory;
+
+/* ---------- Auto add-back ---------- */
+async function openAutoback(){
+  $("abSku").textContent = state.sku;
+  const c = state.catalog.find(x=>x.sku_id===state.sku);
+  $("abName").textContent = c ? (c.sku_name_zh||c.sku_name_en||"") : "";
+  $("abMsg").textContent=""; $("abMsg").className="adm-msg"; $("abPw").value="";
+  let cfg=null, st=null;
+  try{ const r=await api(`/autoback_config?store_code=eq.${state.store}&sku_id=eq.${encodeURIComponent(state.sku)}&select=enabled,delivery_date,expected_qty`); cfg=r&&r[0]; }catch(e){}
+  try{ const r=await api(`/autoback_state?store_code=eq.${state.store}&sku_id=eq.${encodeURIComponent(state.sku)}&select=last_incremental,last_added,last_run_at`); st=r&&r[0]; }catch(e){}
+  $("abEnabled").checked = cfg ? !!cfg.enabled : false;
+  $("abDate").value = cfg ? cfg.delivery_date : "";
+  $("abQty").value = cfg ? cfg.expected_qty : "";
+  const sb=$("abStatus");
+  if(st){ sb.style.display="";
+    sb.innerHTML = `最近一次 sync（verify）：增量(D 之後賣出) <b>${fmtN(st.last_incremental)}</b>`+
+      ` · 已補 <b>${fmtN(st.last_added)}</b>`+(st.last_run_at?` · ${relTime(st.last_run_at)}`:"");
+  } else sb.style.display="none";
+  $("abModal").style.display="flex";
+}
+$("autobackBtn").onclick = openAutoback;
+$("abCancel").onclick = ()=>{ $("abModal").style.display="none"; };
+$("abModal").onclick = e=>{ if(e.target.id==="abModal") $("abModal").style.display="none"; };
+$("abSave").onclick = async ()=>{
+  const enabled=$("abEnabled").checked, D=$("abDate").value, Q=Number($("abQty").value), pw=$("abPw").value, msg=$("abMsg");
+  if(!D){ msg.className="adm-msg adm-err"; msg.textContent="請揀送貨日 D。"; return; }
+  if(!Number.isFinite(Q)||Q<0){ msg.className="adm-msg adm-err"; msg.textContent="請輸入預期銷量 Q。"; return; }
+  if(!pw){ msg.className="adm-msg adm-err"; msg.textContent="請輸入密碼。"; return; }
+  $("abSave").disabled=true; $("abSave").textContent = enabled?"儲存 + set MMS…":"儲存…"; msg.textContent="";
+  const res = await callAdjust({ action:"autoback_config", store_code:state.store, sku_id:state.sku, enabled, delivery_date:D, expected_qty:Q, password:pw });
+  $("abSave").disabled=false; $("abSave").textContent="儲存";
+  if(!res.ok){ msg.className="adm-msg adm-err"; msg.textContent="✗ "+(res.error||("HTTP "+res.status)); return; }
+  msg.className="adm-msg adm-ok";
+  msg.textContent = enabled ? `✅ 已開啟,MMS set 到 ${fmtN(res.after!=null?res.after:Q)};之後每 5 分鐘自動補` : `✅ 已儲存（未開啟)`;
+};
 </script>
 </body>
 </html>
