@@ -34,7 +34,19 @@ ACTIVE_STATUS = ["CONFIRMED", "ACKNOWLEDGED", "PACKED", "PICKED",
                  "PICKEDUP_FROM_MERCHANT", "IN_HUB", "DISPATCHED", "IN_STORE",
                  "IN_LOCKER", "MERCHANT_SHIPPED", "FAIL_TO_DELIVER",
                  "HOLD_BY_CS", "RELEASE_BY_CS", "RECEIVED_BY_CUSTOMER",
-                 "ORDER_COMPLETE"]   # excludes CANCELLED / CS_CANCEL*
+                 "ORDER_COMPLETE",
+                 # Wet-market EXPRESS delivery statuses. These are the in-transit
+                 # states the express flow actually uses
+                 # (READY_TO_PICK -> READY_TO_DELIVER -> IN_ROUTE / IN_ROUTE_FIXED
+                 # -> RECEIVED_BY_CUSTOMER). Omitting them dropped ~16% of a day's
+                 # consignments intraday (they only got counted once they reached
+                 # RECEIVED_BY_CUSTOMER), which showed up as a spurious ~15% CMS>MMS
+                 # gap that "closed" by end of day. SKIPPED = delivery stop skipped
+                 # this round (still active; resolves to RECEIVED by settle). The
+                 # authoritative per-window replace self-corrects any that later
+                 # cancel.
+                 "READY_TO_PICK", "READY_TO_DELIVER", "IN_ROUTE",
+                 "IN_ROUTE_FIXED", "SKIPPED"]   # excludes CANCELLED / CS_CANCEL*
 
 
 def load_run_env():
