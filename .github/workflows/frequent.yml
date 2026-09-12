@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   load:
+    if: ${{ false }}   # MMS SUSPENDED 2026-09-12 — remove this line to re-enable
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
